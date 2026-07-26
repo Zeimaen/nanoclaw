@@ -47,6 +47,100 @@ const ENV_KEYS = [
 ] as const;
 
 /**
+ * `@beeper/chat-adapter-matrix`'s env-driven `createMatrixAdapter()` never
+ * sets `e2ee.useIndexedDB`, so when `MATRIX_RECOVERY_KEY` enables E2EE,
+ * `initRustCrypto()` defaults to an IndexedDB-backed crypto store. Node and
+ * Bun have no `indexedDB` global, so `StoreHandle.open()` throws "The
+ * `indexedDB` getter returned `null` or `undefined`" the moment the adapter
+ * starts — confirmed directly against the installed
+ * `@matrix-org/matrix-sdk-crypto-wasm` build. This forces the in-memory
+ * store instead (the only other option the library exposes here): device
+ * keys and megolm sessions reset on process restart, but the recovery-key
+ * key-backup restore (`maybeLoadKeyBackupFromRecoveryKey`) re-establishes
+ * them on the next boot. `e2eeConfig` is `private readonly` in the type
+ * declarations but a plain mutable field at runtime — this mutates the
+ * object in place rather than reassigning the property, so it holds even
+ * under the readonly typing once cast away. No-op when E2EE isn't enabled
+ * (recoveryKey unset), since `e2eeConfig` is only read from
+ * `maybeInitE2EE()`, which early-returns when `e2eeEnabled` is false.
+ *
+ * IMPORTANT restart caveat: because the store above is memory-only, a fresh
+ * OlmMachine (with a brand-new device identity keypair) is created on every
+ * process restart, but it re-uses the same `MATRIX_DEVICE_ID`. Matrix device
+ * identity keys are immutable once the homeserver has accepted a
+ * `/keys/upload` for that device_id — so the *second* boot with the same
+ * device ID always fails with `400 M_BAD_JSON: Provided device_id in
+ * device_keys does not match that of the authenticated user device`. There
+ * is currently no safe fix for this (a real Node-side persistent IndexedDB
+ * shim was evaluated and rejected — see git history / SKILL.md gotchas for
+ * why). Until upstream (`matrix-js-sdk`/`@matrix-org/matrix-sdk-crypto-wasm`)
+ * gains a Node-native persistent store, every restart requires bumping
+ * `MATRIX_DEVICE_ID` to an unused value and clearing that instance's
+ * persisted session (`chat_sdk_kv` rows `<instance>:session:*` /
+ * `<instance>:device:*` in the central DB) before the next boot.
+ */
+function forceInMemoryE2EEStore(adapter: ReturnType<typeof createMatrixAdapter>): void {
+  const internal = adapter as unknown as { e2eeConfig?: { useIndexedDB?: boolean } };
+  if (internal.e2eeConfig) {
+    internal.e2eeConfig.useIndexedDB = false;
+  }
+}
+
+/**
+ * The adapter never self-verifies its own device, so every other client
+ * shows it as "not verified" even once E2EE is genuinely working. This is
+ * the same operation as Element's "Verify with Security Key": pull the
+ * account's existing private self-signing key out of secret storage
+ * (decrypted via the adapter's `getSecretStorageKey` callback, which is
+ * already wired to `MATRIX_RECOVERY_KEY`) and sign the current device with
+ * it. `setupNewCrossSigning` MUST stay `false` — `true` resets the
+ * account's cross-signing keys entirely and un-verifies every other device
+ * on the account. matrix-js-sdk's own `bootstrapCrossSigning` implementation
+ * (`CrossSigningIdentity.bootstrapCrossSigning`) only takes that destructive
+ * path when `setupNewCrossSigning` is true, or when no private keys exist
+ * anywhere (locally or in secret storage) — safe as long as the account
+ * already has cross-signing set up, which every real Matrix account does.
+ * `client` is `private` in the type declarations; same runtime-mutable-field
+ * reasoning as `forceInMemoryE2EEStore` applies to the cast below.
+ */
+function wrapWithSelfCrossSigning(adapter: ReturnType<typeof createMatrixAdapter>): typeof adapter {
+  const origInitialize = adapter.initialize.bind(adapter);
+  adapter.initialize = async (chat) => {
+    await origInitialize(chat);
+    const internal = adapter as unknown as {
+      client?: {
+        getCrypto?: () => { bootstrapCrossSigning: (opts: { setupNewCrossSigning: boolean }) => Promise<void> } | null;
+      };
+    };
+    const crypto = internal.client?.getCrypto?.();
+    if (!crypto) return;
+    // `startClient()` (called just before this, inside origInitialize) only
+    // starts the sync loop — it doesn't wait for the device's own
+    // /keys/upload to complete, which happens later via the crypto engine's
+    // outgoing-request loop once syncing is underway. Signing the device
+    // before the server even knows about it fails, so retry with backoff
+    // rather than treating the first attempt as authoritative.
+    const attempts = 5;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await crypto.bootstrapCrossSigning({ setupNewCrossSigning: false });
+        log.info('Matrix: self-cross-signed device using recovery key', { attempt });
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        if (attempt === attempts) {
+          log.warn('Matrix: failed to self-cross-sign device after retries', { attempt, message });
+        } else {
+          log.debug('Matrix: self-cross-sign attempt failed, retrying', { attempt, message });
+          await new Promise((resolve) => setTimeout(resolve, attempt * 4000));
+        }
+      }
+    }
+  };
+  return adapter;
+}
+
+/**
  * Wrap the Matrix adapter so DM conversations are identified by user handle
  * across the whole system, not by ephemeral room IDs.
  *
@@ -231,7 +325,10 @@ function registerMatrixInstance(registryName: string, instance: string | undefin
         process.env.MATRIX_INVITE_AUTOJOIN = 'true';
       }
 
-      const matrixAdapter = wrapWithDmResolution(createMatrixAdapter());
+      const rawMatrixAdapter = createMatrixAdapter();
+      forceInMemoryE2EEStore(rawMatrixAdapter);
+      wrapWithSelfCrossSigning(rawMatrixAdapter);
+      const matrixAdapter = wrapWithDmResolution(rawMatrixAdapter);
       const bridge = createChatSdkBridge({
         adapter: matrixAdapter,
         concurrency: 'concurrent',
