@@ -106,7 +106,30 @@ function wrapWithDmResolution(adapter: ReturnType<typeof createMatrixAdapter>): 
       const cached = roomToUserCache.get(roomID);
       if (cached) return `matrix:${cached}`;
 
-      // Not cached — check if this is a DM by membership count
+      // Prefer m.direct account data — authoritative and independent of
+      // lazy-loaded room member state. Under lazy-loading sync filters (on
+      // by default here), the client can know a room's *joined member
+      // count* (from the sync summary) before it has fetched the actual
+      // RoomMember object for the other party, especially for the very
+      // first message in a room the bot just created via openDM. That left
+      // getJoinedMembers() finding only the bot itself and silently
+      // falling through to the raw room-ID form below — which auto-created
+      // a duplicate, unwired messaging group on every such message instead
+      // of resolving to the existing per-user conversation.
+      const directData = (
+        adapter as unknown as { loadCachedDirectAccountData?: () => Record<string, string[]> }
+      ).loadCachedDirectAccountData?.();
+      if (directData) {
+        for (const [userId, roomIds] of Object.entries(directData)) {
+          if (Array.isArray(roomIds) && roomIds.includes(roomID)) {
+            roomToUserCache.set(roomID, userId);
+            return `matrix:${userId}`;
+          }
+        }
+      }
+
+      // Fall back to the membership-count heuristic for rooms m.direct
+      // doesn't know about (e.g. a DM the human started without marking it).
       const client = (adapter as any).client;
       const room = client?.getRoom(roomID);
       if (!room) return origChannelIdFromThreadId(threadId);
