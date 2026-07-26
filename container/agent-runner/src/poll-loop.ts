@@ -772,6 +772,7 @@ function sendToDestination(dest: DestinationEntry, body: string, routing: Routin
     kind: 'chat',
     platform_id: platformId,
     channel_type: channelType,
+    instance: dest.type === 'channel' ? (dest.instance ?? null) : null,
     thread_id: destRouting?.threadId ?? null,
     content: JSON.stringify({ text: body }),
   });

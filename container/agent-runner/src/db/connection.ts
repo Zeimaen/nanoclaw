@@ -112,6 +112,18 @@ export function getOutboundDb(): Database {
         updated_at               TEXT NOT NULL
       );
     `);
+    // messages_out.instance: added after the initial v2 schema, to
+    // disambiguate delivery when two adapter instances of one channel type
+    // can reach the same (channel_type, platform_id) pair (e.g. two Matrix
+    // bot accounts DMing the same external user). Existing outbound.db files
+    // predate the column, so retrofit it before writeMessageOut's INSERT
+    // names it.
+    const outCols = new Set(
+      (_outbound.prepare("PRAGMA table_info('messages_out')").all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    if (!outCols.has('instance')) {
+      _outbound.exec(`ALTER TABLE messages_out ADD COLUMN instance TEXT`);
+    }
   }
   return _outbound;
 }
@@ -215,6 +227,7 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
       type            TEXT NOT NULL,
       channel_type    TEXT,
       platform_id     TEXT,
+      instance        TEXT,
       agent_group_id  TEXT
     );
   `);
@@ -232,6 +245,7 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
       kind           TEXT NOT NULL,
       platform_id    TEXT,
       channel_type   TEXT,
+      instance       TEXT,
       thread_id      TEXT,
       content        TEXT NOT NULL
     );

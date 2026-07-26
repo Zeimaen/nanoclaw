@@ -48,23 +48,31 @@ function destinationList(): string {
  */
 function resolveRouting(
   to: string,
-): { channel_type: string; platform_id: string; thread_id: string | null; resolvedName: string } | { error: string } {
+):
+  | { channel_type: string; platform_id: string; instance: string | null; thread_id: string | null; resolvedName: string }
+  | { error: string } {
   const dest = findByName(to);
   if (!dest) return { error: `Unknown destination "${to}". Known: ${destinationList()}` };
   if (dest.type === 'channel') {
-    // If the destination is the same channel the session is bound to,
-    // preserve the thread_id so replies land in the correct thread.
+    // If the destination is the same channel AND instance the session is
+    // bound to, preserve the thread_id so replies land in the correct
+    // thread. Two adapter instances of one channel type can share a
+    // (channel_type, platform_id) pair (e.g. two Matrix bots DMing the same
+    // user), so instance must match too — otherwise a reply meant for one
+    // bot account could reuse a thread_id that only makes sense on the other.
     const session = getSessionRouting();
-    const threadId =
-      session.channel_type === dest.channelType && session.platform_id === dest.platformId ? session.thread_id : null;
+    const sameChannel = session.channel_type === dest.channelType && session.platform_id === dest.platformId;
+    const sameInstance = (session.instance ?? null) === (dest.instance ?? null);
+    const threadId = sameChannel && sameInstance ? session.thread_id : null;
     return {
       channel_type: dest.channelType!,
       platform_id: dest.platformId!,
+      instance: dest.instance ?? null,
       thread_id: threadId,
       resolvedName: to,
     };
   }
-  return { channel_type: 'agent', platform_id: dest.agentGroupId!, thread_id: null, resolvedName: to };
+  return { channel_type: 'agent', platform_id: dest.agentGroupId!, instance: null, thread_id: null, resolvedName: to };
 }
 
 export const sendMessage: McpToolDefinition = {
@@ -99,6 +107,7 @@ export const sendMessage: McpToolDefinition = {
       kind: 'chat',
       platform_id: routing.platform_id,
       channel_type: routing.channel_type,
+      instance: routing.instance,
       thread_id: routing.thread_id,
       content: JSON.stringify({ text }),
     });
@@ -148,6 +157,7 @@ export const sendFile: McpToolDefinition = {
       kind: 'chat',
       platform_id: routing.platform_id,
       channel_type: routing.channel_type,
+      instance: routing.instance,
       thread_id: routing.thread_id,
       content: JSON.stringify({ text: (args.text as string) || '', files: [filename] }),
     });
@@ -189,6 +199,7 @@ export const editMessage: McpToolDefinition = {
       kind: 'chat',
       platform_id: routing.platform_id,
       channel_type: routing.channel_type,
+      instance: routing.instance,
       thread_id: routing.thread_id,
       content: JSON.stringify({ operation: 'edit', messageId: platformId, text }),
     });
@@ -230,6 +241,7 @@ export const addReaction: McpToolDefinition = {
       kind: 'chat',
       platform_id: routing.platform_id,
       channel_type: routing.channel_type,
+      instance: routing.instance,
       thread_id: routing.thread_id,
       content: JSON.stringify({ operation: 'reaction', messageId: platformId, emoji }),
     });

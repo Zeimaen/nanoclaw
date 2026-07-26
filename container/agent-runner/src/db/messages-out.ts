@@ -16,6 +16,7 @@ export interface MessageOutRow {
   kind: string;
   platform_id: string | null;
   channel_type: string | null;
+  instance: string | null;
   thread_id: string | null;
   content: string;
 }
@@ -28,6 +29,7 @@ export interface WriteMessageOut {
   kind: string;
   platform_id?: string | null;
   channel_type?: string | null;
+  instance?: string | null;
   thread_id?: string | null;
   content: string;
 }
@@ -57,8 +59,8 @@ export function writeMessageOut(msg: WriteMessageOut): number {
   // in the JS object keys (better-sqlite3 auto-stripped it, bun:sqlite does not).
   outbound
     .prepare(
-      `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, thread_id, content)
-     VALUES ($id, $seq, $in_reply_to, $timestamp, $deliver_after, $recurrence, $kind, $platform_id, $channel_type, $thread_id, $content)`,
+      `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, instance, thread_id, content)
+     VALUES ($id, $seq, $in_reply_to, $timestamp, $deliver_after, $recurrence, $kind, $platform_id, $channel_type, $instance, $thread_id, $content)`,
     )
     .run({
       $id: msg.id,
@@ -70,6 +72,7 @@ export function writeMessageOut(msg: WriteMessageOut): number {
       $kind: msg.kind,
       $platform_id: msg.platform_id ?? null,
       $channel_type: msg.channel_type ?? null,
+      $instance: msg.instance ?? null,
       $thread_id: msg.thread_id ?? null,
       $content: msg.content,
     });
@@ -119,16 +122,20 @@ export function getMessageIdBySeq(seq: number): string | null {
  */
 export function getRoutingBySeq(
   seq: number,
-): { channel_type: string | null; platform_id: string | null; thread_id: string | null } | null {
+): { channel_type: string | null; platform_id: string | null; instance: string | null; thread_id: string | null } | null {
   const inbound = getInboundDb();
-  const inRow = inbound
-    .prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE seq = ?')
-    .get(seq) as { channel_type: string | null; platform_id: string | null; thread_id: string | null } | undefined;
-  if (inRow) return inRow;
+  // messages_in has no instance column — inbound is always a single specific
+  // adapter instance per session-wiring, so there's nothing to disambiguate.
+  const inRow = inbound.prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE seq = ?').get(seq) as
+    | { channel_type: string | null; platform_id: string | null; thread_id: string | null }
+    | undefined;
+  if (inRow) return { ...inRow, instance: null };
 
   const outRow = getOutboundDb()
-    .prepare('SELECT channel_type, platform_id, thread_id FROM messages_out WHERE seq = ?')
-    .get(seq) as { channel_type: string | null; platform_id: string | null; thread_id: string | null } | undefined;
+    .prepare('SELECT channel_type, platform_id, instance, thread_id FROM messages_out WHERE seq = ?')
+    .get(seq) as
+    | { channel_type: string | null; platform_id: string | null; instance: string | null; thread_id: string | null }
+    | undefined;
   return outRow ?? null;
 }
 

@@ -17,10 +17,10 @@ function seedSessionRouting(channelType: string | null, platformId: string | nul
   const db = getInboundDb();
   db.exec(`CREATE TABLE IF NOT EXISTS session_routing (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    channel_type TEXT, platform_id TEXT, thread_id TEXT
+    channel_type TEXT, platform_id TEXT, instance TEXT, thread_id TEXT
   )`);
   db.prepare(
-    'INSERT OR REPLACE INTO session_routing (id, channel_type, platform_id, thread_id) VALUES (1, ?, ?, ?)',
+    'INSERT OR REPLACE INTO session_routing (id, channel_type, platform_id, instance, thread_id) VALUES (1, ?, ?, NULL, ?)',
   ).run(channelType, platformId, threadId);
 }
 

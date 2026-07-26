@@ -18,6 +18,8 @@ export interface DestinationEntry {
   type: 'channel' | 'agent';
   channelType?: string;
   platformId?: string;
+  /** Adapter instance that owns this chat, when N adapters of one channel type are registered. */
+  instance?: string;
   agentGroupId?: string;
 }
 
@@ -29,6 +31,7 @@ interface DestRow {
   type: 'channel' | 'agent';
   channel_type: string | null;
   platform_id: string | null;
+  instance: string | null;
   agent_group_id: string | null;
 }
 
@@ -39,6 +42,7 @@ function rowToEntry(row: DestRow): DestinationEntry {
     type: row.type,
     channelType: row.channel_type ?? undefined,
     platformId: row.platform_id ?? undefined,
+    instance: row.instance ?? undefined,
     agentGroupId: row.agent_group_id ?? undefined,
   };
 }

@@ -249,6 +249,7 @@ async function deliverMessage(
     kind: string;
     platform_id: string | null;
     channel_type: string | null;
+    instance?: string | null;
     thread_id: string | null;
     content: string;
     in_reply_to: string | null;
@@ -319,17 +320,28 @@ async function deliverMessage(
   let deliverInstance: string | undefined;
   if (msg.channel_type && msg.platform_id) {
     // Resolve the messaging group ORIGIN-SESSION-FIRST: when the message
-    // targets the session's own chat address, the origin row wins even if
-    // sibling instances share the same (channel_type, platform_id) — so the
-    // reply goes out through the instance the message came in on. Otherwise
-    // fall back to the by-platform lookup (default-instance-first).
+    // targets the session's own chat address AND instance, the origin row
+    // wins even if sibling instances share the same (channel_type,
+    // platform_id) — so the reply goes out through the instance the message
+    // came in on. Otherwise resolve by (channel_type, platform_id, instance):
+    // msg.instance came from the container's destination map (see
+    // write-destinations.ts), so an explicit instance is exact-only; only a
+    // legacy message written before the instance column existed (msg.instance
+    // undefined) falls back to the default-instance-first lookup.
     const originMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
-    const mg =
-      originMg && originMg.channel_type === msg.channel_type && originMg.platform_id === msg.platform_id
-        ? originMg
-        : getMessagingGroupByPlatform(msg.channel_type, msg.platform_id);
+    const originMatches =
+      originMg &&
+      originMg.channel_type === msg.channel_type &&
+      originMg.platform_id === msg.platform_id &&
+      (msg.instance == null || (originMg.instance ?? originMg.channel_type) === msg.instance);
+    const mg = originMatches
+      ? originMg
+      : getMessagingGroupByPlatform(msg.channel_type, msg.platform_id, msg.instance ?? undefined);
     if (!mg) {
-      throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
+      throw new Error(
+        `unknown messaging group for ${msg.channel_type}/${msg.platform_id}` +
+          `${msg.instance ? `@${msg.instance}` : ''} (message ${msg.id})`,
+      );
     }
     const isOriginChat = session.messaging_group_id === mg.id;
     // Guarded: without the agent-to-agent module, `agent_destinations`
