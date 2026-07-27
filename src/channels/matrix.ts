@@ -141,6 +141,51 @@ function wrapWithSelfCrossSigning(adapter: ReturnType<typeof createMatrixAdapter
 }
 
 /**
+ * `openDM()`'s internal `loadDirectAccountData()` treats ANY non-empty local
+ * account-data cache as authoritative and skips fetching from the server —
+ * `if (Object.keys(cached).length > 0) return cached;` in the vendored dist.
+ * Right after a restart the client resumes from a persisted sync token (an
+ * incremental sync), so a DM room with no recent activity never gets
+ * re-materialized locally, and the restored account-data snapshot can
+ * predate the last time this room was written to `m.direct`. When both miss,
+ * `openDM` falls through to `createRoom()` and invites the human to a
+ * brand-new room instead of reusing the real one — confirmed against
+ * matrix.org: one bot account collected 4 separate DM rooms with the same
+ * human over 24h, one created 3 minutes after a host restart.
+ *
+ * Fixed by always checking the live `m.direct` data from the server first —
+ * bypassing the adapter's own stale-cache short-circuit — and returning the
+ * known-good room directly when found (same "room not locally loaded is not
+ * proof it's gone" leniency the adapter's own `findExistingDirectRoomID`
+ * uses). Only falls through to the adapter's real `openDM` (and its
+ * `createRoom` fallback) when there genuinely is no existing room, or this
+ * pre-check itself fails for any reason.
+ */
+function wrapWithFreshDmLookup(adapter: ReturnType<typeof createMatrixAdapter>): typeof adapter {
+  const origOpenDM = adapter.openDM.bind(adapter);
+  adapter.openDM = async (userId: string): Promise<string> => {
+    try {
+      const client = (adapter as any).client;
+      const direct = await client?.getAccountDataFromServer?.('m.direct');
+      const roomIds = direct && Array.isArray(direct[userId]) ? direct[userId] : [];
+      for (const roomID of roomIds) {
+        if (typeof roomID !== 'string' || !roomID) continue;
+        const room = client.getRoom(roomID);
+        const membership = room?.getMyMembership?.();
+        if (!room || membership === 'join' || membership === 'invite') {
+          return adapter.encodeThreadId({ roomID });
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.debug('Matrix: fresh m.direct pre-check failed, falling back to adapter openDM', { userId, message });
+    }
+    return origOpenDM(userId);
+  };
+  return adapter;
+}
+
+/**
  * Wrap the Matrix adapter so DM conversations are identified by user handle
  * across the whole system, not by ephemeral room IDs.
  *
@@ -328,6 +373,7 @@ function registerMatrixInstance(registryName: string, instance: string | undefin
       const rawMatrixAdapter = createMatrixAdapter();
       forceInMemoryE2EEStore(rawMatrixAdapter);
       wrapWithSelfCrossSigning(rawMatrixAdapter);
+      wrapWithFreshDmLookup(rawMatrixAdapter);
       const matrixAdapter = wrapWithDmResolution(rawMatrixAdapter);
       const bridge = createChatSdkBridge({
         adapter: matrixAdapter,
