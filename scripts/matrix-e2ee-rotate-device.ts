@@ -1,27 +1,36 @@
 /**
  * scripts/matrix-e2ee-rotate-device.ts — run before restarting the NanoClaw
- * host if any Matrix instance has E2EE enabled (MATRIX_RECOVERY_KEY set).
+ * host if ANY Matrix instance has E2EE enabled (`<PREFIX>_RECOVERY_KEY` set).
  *
  * Why this exists: the Matrix crypto store is memory-only (see
  * forceInMemoryE2EEStore in src/channels/matrix.ts — Node/Bun have no
  * IndexedDB, and that's the library's only persistent option). Every host
  * restart generates a fresh device identity keypair but reuses the
- * configured MATRIX_DEVICE_ID, and Matrix device identity keys are
+ * configured `<PREFIX>_DEVICE_ID`, and Matrix device identity keys are
  * immutable once the homeserver has accepted a /keys/upload for that
  * device_id — so the second boot with the same device ID always fails with
  * 400 M_BAD_JSON ("device_id in device_keys does not match"). This script
- * rolls MATRIX_DEVICE_ID to a fresh value and clears the stale persisted
+ * rolls `<PREFIX>_DEVICE_ID` to a fresh value and clears the stale persisted
  * session so the next boot logs in clean. wrapWithSelfCrossSigning then
  * re-verifies the new device automatically — no manual verification step.
  *
- * Usage:
- *   pnpm exec tsx scripts/matrix-e2ee-rotate-device.ts [--instance matrix] [--restart]
+ * Multi-instance: every E2EE-enabled Matrix instance shares this restart
+ * fragility independently — rotating only one before a restart silently
+ * burns any other instance's device. Default behavior (no --instance flags)
+ * rotates every instance with a non-empty `<PREFIX>_RECOVERY_KEY` in .env,
+ * auto-detected, so a restart can never accidentally skip one. All targeted
+ * instances are validated and prepped together before a single restart —
+ * never one restart per instance.
  *
- * --instance defaults to "matrix" (the unsuffixed, first-configured
- * instance). Pass "matrix2", "matrix3", etc. for additional instances
- * registered via MATRIX2_*, MATRIX3_*, ... env vars.
+ * Usage:
+ *   pnpm exec tsx scripts/matrix-e2ee-rotate-device.ts [--instance matrix] [--instance matrix2] [--restart]
+ *
+ * --instance may be repeated to target specific instances instead of the
+ * auto-detected set — e.g. a brand-new instance whose `<PREFIX>_DEVICE_ID`
+ * you just added to .env for its first-ever E2EE boot (auto-detection still
+ * requires the device-id line to exist, same as an explicit --instance).
  * --restart additionally runs `systemctl --user restart` on this install's
- * unit once the prep is done; omit it to just prep and print the command.
+ * unit once every targeted instance is prepped.
  */
 import { execFileSync } from 'child_process';
 import fs from 'fs';
@@ -33,19 +42,6 @@ import { DATA_DIR } from '../src/config.js';
 import { getSystemdUnit } from '../src/install-slug.js';
 
 const PROJECT_ROOT = process.cwd();
-
-const args = process.argv.slice(2);
-const instanceFlagIdx = args.indexOf('--instance');
-const instance = instanceFlagIdx !== -1 ? args[instanceFlagIdx + 1] : 'matrix';
-const shouldRestart = args.includes('--restart');
-
-if (!instance) {
-  console.error('Usage: pnpm exec tsx scripts/matrix-e2ee-rotate-device.ts [--instance matrix] [--restart]');
-  process.exit(2);
-}
-
-const envPrefix = `${instance.toUpperCase()}_`;
-const deviceIdKey = `${envPrefix}DEVICE_ID`;
 const envPath = path.join(PROJECT_ROOT, '.env');
 
 if (!fs.existsSync(envPath)) {
@@ -53,24 +49,44 @@ if (!fs.existsSync(envPath)) {
   process.exit(1);
 }
 
-const envLines = fs.readFileSync(envPath, 'utf-8').split('\n');
-const lineIdx = envLines.findIndex((line) => line.trim().startsWith(`${deviceIdKey}=`));
+const args = process.argv.slice(2);
+const shouldRestart = args.includes('--restart');
+const explicitInstances = args.flatMap((arg, i) => (arg === '--instance' ? [args[i + 1]] : [])).filter(
+  (v): v is string => Boolean(v),
+);
 
-if (lineIdx === -1) {
-  console.error(
-    `${deviceIdKey} not found in .env — is E2EE enabled for instance "${instance}"? ` +
-      `(set MATRIX_RECOVERY_KEY / ${deviceIdKey} first if this is a first-time setup)`,
-  );
-  process.exit(1);
+const envLines = fs.readFileSync(envPath, 'utf-8').split('\n');
+
+/** Every instance with a non-empty `<PREFIX>_RECOVERY_KEY` line in .env. */
+function detectE2eeInstances(): string[] {
+  const found = new Set<string>();
+  for (const line of envLines) {
+    const match = line.trim().match(/^([A-Z][A-Z0-9]*)_RECOVERY_KEY=(.*)$/);
+    if (match && match[2]!.trim().length > 0) {
+      found.add(match[1]!.toLowerCase());
+    }
+  }
+  return [...found];
 }
 
-const currentValue = envLines[lineIdx].slice(envLines[lineIdx].indexOf('=') + 1).trim();
+const instances = explicitInstances.length > 0 ? explicitInstances : detectE2eeInstances();
+
+if (instances.length === 0) {
+  console.log('No Matrix instance has E2EE enabled (no non-empty *_RECOVERY_KEY in .env) — nothing to rotate.');
+  if (shouldRestart) {
+    const unit = `${getSystemdUnit(PROJECT_ROOT)}.service`;
+    console.log(`Restarting systemctl --user unit ${unit} ...`);
+    execFileSync('systemctl', ['--user', 'restart', unit], { stdio: 'inherit' });
+    console.log('Restarted.');
+  }
+  process.exit(0);
+}
 
 function nextDeviceId(current: string): string {
   const match = current.match(/^(.*?)(\d+)$/);
   if (match) {
     const [, prefix, digits] = match;
-    const incremented = (parseInt(digits, 10) + 1).toString().padStart(digits.length, '0');
+    const incremented = (parseInt(digits!, 10) + 1).toString().padStart(digits!.length, '0');
     return `${prefix}${incremented}`;
   }
   // No numeric suffix to increment — append a short random one so this
@@ -78,23 +94,60 @@ function nextDeviceId(current: string): string {
   return `${current}-${Math.random().toString(16).slice(2, 6)}`;
 }
 
-const newValue = nextDeviceId(currentValue);
-envLines[lineIdx] = `${deviceIdKey}=${newValue}`;
-fs.writeFileSync(envPath, envLines.join('\n'));
-console.log(`${deviceIdKey}: ${currentValue} -> ${newValue}`);
+interface Rotation {
+  instance: string;
+  deviceIdKey: string;
+  lineIdx: number;
+  currentValue: string;
+  newValue: string;
+}
 
-// Clear the persisted session for this instance so the next boot does a
-// genuinely fresh login bound to the new device, rather than reusing an
-// access token tied to the old (about-to-be-abandoned) device. Also sweep
-// that device's per-device sync-store cache (matrix:store:<deviceId>:*) —
-// it's keyed by device ID, so it's already permanently orphaned the moment
-// the device ID rotates, and would otherwise accumulate forever.
+// Validate every targeted instance BEFORE touching anything — all-or-nothing,
+// so a typo'd --instance or a missing device-id line for one instance never
+// leaves .env half-rotated ahead of a restart.
+const rotations: Rotation[] = [];
+const errors: string[] = [];
+
+for (const instance of instances) {
+  const envPrefix = `${instance.toUpperCase()}_`;
+  const deviceIdKey = `${envPrefix}DEVICE_ID`;
+  const lineIdx = envLines.findIndex((line) => line.trim().startsWith(`${deviceIdKey}=`));
+  if (lineIdx === -1) {
+    errors.push(
+      `${deviceIdKey} not found in .env — is E2EE enabled for instance "${instance}"? ` +
+        `(set ${envPrefix}RECOVERY_KEY / ${deviceIdKey} first if this is a first-time setup)`,
+    );
+    continue;
+  }
+  const currentValue = envLines[lineIdx]!.slice(envLines[lineIdx]!.indexOf('=') + 1).trim();
+  rotations.push({ instance, deviceIdKey, lineIdx, currentValue, newValue: nextDeviceId(currentValue) });
+}
+
+if (errors.length > 0) {
+  for (const e of errors) console.error(e);
+  process.exit(1);
+}
+
+for (const r of rotations) {
+  envLines[r.lineIdx] = `${r.deviceIdKey}=${r.newValue}`;
+  console.log(`${r.deviceIdKey}: ${r.currentValue} -> ${r.newValue}`);
+}
+fs.writeFileSync(envPath, envLines.join('\n'));
+
+// Clear each instance's persisted session so the next boot does a genuinely
+// fresh login bound to the new device, rather than reusing an access token
+// tied to the old (about-to-be-abandoned) device. Also sweep that device's
+// per-device sync-store cache (<instance>:store:*:<deviceId>:*) — it's keyed
+// by device ID, so it's already permanently orphaned the moment the device
+// ID rotates, and would otherwise accumulate forever.
 const db = new Database(path.join(DATA_DIR, 'v2.db'));
 try {
-  const result = db
-    .prepare(`DELETE FROM chat_sdk_kv WHERE key LIKE ? OR key LIKE ? OR key LIKE ?`)
-    .run(`${instance}:session:%`, `${instance}:device:%`, `${instance}:store:%:${currentValue}:%`);
-  console.log(`Cleared ${result.changes} persisted session/store row(s) for instance "${instance}".`);
+  for (const r of rotations) {
+    const result = db
+      .prepare(`DELETE FROM chat_sdk_kv WHERE key LIKE ? OR key LIKE ? OR key LIKE ?`)
+      .run(`${r.instance}:session:%`, `${r.instance}:device:%`, `${r.instance}:store:%:${r.currentValue}:%`);
+    console.log(`Cleared ${result.changes} persisted session/store row(s) for instance "${r.instance}".`);
+  }
 } finally {
   db.close();
 }
@@ -104,7 +157,7 @@ const unit = `${getSystemdUnit(PROJECT_ROOT)}.service`;
 if (shouldRestart) {
   console.log(`Restarting systemctl --user unit ${unit} ...`);
   execFileSync('systemctl', ['--user', 'restart', unit], { stdio: 'inherit' });
-  console.log('Restarted. Self-cross-signing re-verifies the new device automatically — no manual step needed.');
+  console.log('Restarted. Self-cross-signing re-verifies the new device(s) automatically — no manual step needed.');
 } else {
   console.log(`Ready. Restart with: systemctl --user restart ${unit}`);
 }
