@@ -137,15 +137,38 @@ fs.writeFileSync(envPath, envLines.join('\n'));
 // Clear each instance's persisted session so the next boot does a genuinely
 // fresh login bound to the new device, rather than reusing an access token
 // tied to the old (about-to-be-abandoned) device. Also sweep that device's
-// per-device sync-store cache (<instance>:store:*:<deviceId>:*) — it's keyed
+// per-device sync-store cache (<keyBase>:store:*:<deviceId>:*) — it's keyed
 // by device ID, so it's already permanently orphaned the moment the device
 // ID rotates, and would otherwise accumulate forever.
+//
+// Key namespacing is NOT simply "<instance>:" — chat-sdk-bridge.ts's
+// SqliteStateAdapter only adds an outer "<instance>:" prefix when the
+// NanoClaw instance name differs from the Chat SDK adapter's own hardcoded
+// `name` (always the literal string "matrix" for every Matrix instance, see
+// `name = "matrix"` in the vendored @beeper/chat-adapter-matrix). The
+// DEFAULT instance is registered with `instance: undefined` specifically so
+// it collapses onto that unprefixed legacy keyspace — its NanoClaw instance
+// name ("matrix") equals the adapter name, so chat-sdk-bridge.ts adds no
+// outer prefix, and the vendored package's OWN internal keyPrefix ("matrix",
+// unconfigurable here) is all that shows up: keys look like "matrix:dm:...".
+// Every OTHER instance (matrix2, matrix3, ...) gets the outer prefix ON TOP
+// of that same inner "matrix:" — keys look like "matrix2:matrix:dm:...".
+// Using "<instance>:session:%" unconditionally (the original bug) silently
+// matched nothing for any non-default instance — confirmed live: it left a
+// named instance's stale pre-rotation session in place, which the SDK then
+// reused instead of doing the intended fresh login, so the "rotated" device
+// ID never actually took effect on the homeserver.
+function keyBase(instance: string): string {
+  return instance === 'matrix' ? 'matrix' : `${instance}:matrix`;
+}
+
 const db = new Database(path.join(DATA_DIR, 'v2.db'));
 try {
   for (const r of rotations) {
+    const base = keyBase(r.instance);
     const result = db
       .prepare(`DELETE FROM chat_sdk_kv WHERE key LIKE ? OR key LIKE ? OR key LIKE ?`)
-      .run(`${r.instance}:session:%`, `${r.instance}:device:%`, `${r.instance}:store:%:${r.currentValue}:%`);
+      .run(`${base}:session:%`, `${base}:device:%`, `${base}:store:%:${r.currentValue}:%`);
     console.log(`Cleared ${result.changes} persisted session/store row(s) for instance "${r.instance}".`);
   }
 } finally {
