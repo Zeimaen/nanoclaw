@@ -151,22 +151,63 @@ function wrapWithSelfCrossSigning(adapter: ReturnType<typeof createMatrixAdapter
  * `openDM` falls through to `createRoom()` and invites the human to a
  * brand-new room instead of reusing the real one — confirmed against
  * matrix.org: one bot account collected 4 separate DM rooms with the same
- * human over 24h, one created 3 minutes after a host restart.
+ * human over 24h.
  *
- * Fixed by always checking the live `m.direct` data from the server first —
- * bypassing the adapter's own stale-cache short-circuit — and returning the
- * known-good room directly when found (same "room not locally loaded is not
- * proof it's gone" leniency the adapter's own `findExistingDirectRoomID`
- * uses). Only falls through to the adapter's real `openDM` (and its
- * `createRoom` fallback) when there genuinely is no existing room, or this
- * pre-check itself fails for any reason.
+ * First fix attempt added a single live `m.direct` server fetch ahead of the
+ * adapter's own resolution and returned the known-good room when found. That
+ * fetch is a real network call and can itself fail or race right after a
+ * restart — when it does, the code silently fell through to the adapter's
+ * original (buggy) `openDM`, which is exactly what happened on the very next
+ * restart: a duplicate room was created 83 seconds after boot, seconds after
+ * the human sent a message that arrived fine in the OLD room. The failure
+ * was invisible because it logged at `debug`, below the default `info`
+ * threshold (src/log.ts) — a diagnosability bug on top of the original one.
+ *
+ * Now three tiers, each strictly cheaper/more certain than the ones after
+ * it, and creating a room is the last resort rather than what a single
+ * failed check falls back to:
+ *   1. The adapter's own persisted room-id pointer (`loadPersistedDMRoomID`,
+ *      a local KV read, no network) checked against the locally-loaded room
+ *      list — the adapter's own happy path, minus its destructive
+ *      clear-on-miss side effect.
+ *   2. Live `m.direct` from the server — catches a real room that just
+ *      isn't locally loaded yet (the original fix's case).
+ *   3. If we have a persisted room id but neither check above could
+ *      *confirm* it (tier 1 said not-yet-loaded/unclear, tier 2's network
+ *      call itself failed), reuse it anyway rather than mint a duplicate — a
+ *      stale id fails loudly on send, which beats silently forking the
+ *      conversation into a new room. Failure paths log at `warn` (not
+ *      `debug`) so a repeat is visible in the default-level log.
+ *
+ * Only a genuinely new user — no persisted id, and no m.direct entry either
+ * — falls through to the adapter's real `openDM` and its `createRoom` path.
  */
 function wrapWithFreshDmLookup(adapter: ReturnType<typeof createMatrixAdapter>): typeof adapter {
   const origOpenDM = adapter.openDM.bind(adapter);
   adapter.openDM = async (userId: string): Promise<string> => {
+    const client = (adapter as any).client;
+    if (!client) return origOpenDM(userId);
+
+    let persistedRoomId: string | undefined;
     try {
-      const client = (adapter as any).client;
-      const direct = await client?.getAccountDataFromServer?.('m.direct');
+      persistedRoomId = await (adapter as any).loadPersistedDMRoomID?.(userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn('Matrix: reading persisted DM room id failed', { userId, message });
+    }
+
+    // Tier 1: local-only fast path, no network call.
+    if (persistedRoomId) {
+      const room = client.getRoom(persistedRoomId);
+      const membership = room?.getMyMembership?.();
+      if (membership === 'join' || membership === 'invite') {
+        return adapter.encodeThreadId({ roomID: persistedRoomId });
+      }
+    }
+
+    // Tier 2: live server m.direct.
+    try {
+      const direct = await client.getAccountDataFromServer('m.direct');
       const roomIds = direct && Array.isArray(direct[userId]) ? direct[userId] : [];
       for (const roomID of roomIds) {
         if (typeof roomID !== 'string' || !roomID) continue;
@@ -178,8 +219,20 @@ function wrapWithFreshDmLookup(adapter: ReturnType<typeof createMatrixAdapter>):
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log.debug('Matrix: fresh m.direct pre-check failed, falling back to adapter openDM', { userId, message });
+      log.warn('Matrix: fresh m.direct pre-check failed', {
+        userId,
+        message,
+        hasPersistedRoomId: Boolean(persistedRoomId),
+      });
     }
+
+    // Tier 3: neither check above confirmed a room, but we have a
+    // previously known one — reuse it over creating a duplicate.
+    if (persistedRoomId) {
+      log.warn('Matrix: reusing last-known DM room id without fresh confirmation', { userId, persistedRoomId });
+      return adapter.encodeThreadId({ roomID: persistedRoomId });
+    }
+
     return origOpenDM(userId);
   };
   return adapter;
