@@ -282,6 +282,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
           question,
           options: APPROVAL_OPTIONS,
         }),
+        undefined,
+        target.messagingGroup.instance,
       );
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });
