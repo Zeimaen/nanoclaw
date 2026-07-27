@@ -97,10 +97,11 @@ export interface AgentGroupMember {
   added_at: string;
 }
 
-/** Cached DM channel for a user on a specific channel_type. */
+/** Cached DM channel for a user on a specific (channel_type, instance). */
 export interface UserDm {
   user_id: string;
   channel_type: string;
+  instance: string;
   messaging_group_id: string;
   resolved_at: string;
 }

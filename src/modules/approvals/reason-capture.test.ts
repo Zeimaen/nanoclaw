@@ -143,6 +143,7 @@ beforeEach(() => {
   upsertUserDm({
     user_id: 'slack:admin-1',
     channel_type: DM_CHANNEL,
+    instance: DM_CHANNEL,
     messaging_group_id: 'mg-dm-1',
     resolved_at: now(),
   });

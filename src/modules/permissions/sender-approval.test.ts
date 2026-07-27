@@ -121,10 +121,10 @@ beforeEach(async () => {
   const { getDb } = await import('../../db/connection.js');
   getDb()
     .prepare(
-      `INSERT INTO user_dms (user_id, channel_type, messaging_group_id, resolved_at)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO user_dms (user_id, channel_type, instance, messaging_group_id, resolved_at)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .run('telegram:owner', 'telegram', 'mg-dm-owner', now());
+    .run('telegram:owner', 'telegram', 'telegram', 'mg-dm-owner', now());
 
   deliverMock.mockClear();
 });

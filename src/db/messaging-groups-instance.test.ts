@@ -150,8 +150,8 @@ describe('migration 016 — wired legacy DB upgrade (the FK recreate arm)', () =
     db.prepare("INSERT INTO users (id, kind, created_at) VALUES ('slack:U1', 'slack', ?)").run(now());
     db.pragma('foreign_keys = OFF');
     db.prepare(
-      `INSERT INTO user_dms (user_id, channel_type, messaging_group_id, resolved_at)
-       VALUES ('slack:U1', 'slack', 'mg-deleted-via-cli', ?)`,
+      `INSERT INTO user_dms (user_id, channel_type, instance, messaging_group_id, resolved_at)
+       VALUES ('slack:U1', 'slack', 'slack', 'mg-deleted-via-cli', ?)`,
     ).run(now());
     db.pragma('foreign_keys = ON');
     expect(db.pragma('foreign_key_check')).toHaveLength(1);
@@ -178,8 +178,8 @@ describe('migration 016 — wired legacy DB upgrade (the FK recreate arm)', () =
       up: (d) => {
         d.prepare("INSERT INTO users (id, kind, created_at) VALUES ('slack:U-rogue', 'slack', datetime('now'))").run();
         d.prepare(
-          `INSERT INTO user_dms (user_id, channel_type, messaging_group_id, resolved_at)
-           VALUES ('slack:U-rogue', 'slack', 'mg-never-existed', datetime('now'))`,
+          `INSERT INTO user_dms (user_id, channel_type, instance, messaging_group_id, resolved_at)
+           VALUES ('slack:U-rogue', 'slack', 'slack', 'mg-never-existed', datetime('now'))`,
         ).run();
       },
     };
