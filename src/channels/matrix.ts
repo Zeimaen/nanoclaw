@@ -14,6 +14,7 @@
  *   MATRIX_DEVICE_ID            — stable device ID across restarts
  */
 import { createMatrixAdapter } from '@beeper/chat-adapter-matrix';
+import { defaultEmojiResolver } from 'chat';
 
 import { log } from '../log.js';
 import { readEnvFile } from '../env.js';
@@ -257,6 +258,8 @@ function wrapWithFreshDmLookup(adapter: ReturnType<typeof createMatrixAdapter>):
 function wrapWithDmResolution(adapter: ReturnType<typeof createMatrixAdapter>): typeof adapter {
   const origPostMessage = adapter.postMessage.bind(adapter);
   const origStartTyping = adapter.startTyping.bind(adapter);
+  const origEditMessage = adapter.editMessage.bind(adapter);
+  const origAddReaction = adapter.addReaction.bind(adapter);
   const origChannelIdFromThreadId = adapter.channelIdFromThreadId.bind(adapter);
 
   // roomId → user handle, used to rewrite inbound channel IDs.
@@ -367,6 +370,58 @@ function wrapWithDmResolution(adapter: ReturnType<typeof createMatrixAdapter>): 
   adapter.startTyping = async (threadId: string) => {
     const resolvedTid = await resolveThreadId(threadId);
     return origStartTyping(resolvedTid);
+  };
+
+  // Same DM-resolution requirement as postMessage/startTyping above: the
+  // underlying adapter's editMessage/addReaction both call decodeThreadId()
+  // expecting the room-encoded form ("matrix:<roomID>"). For DM sessions
+  // (supportsThreads: false, so thread_id is never persisted — see
+  // router.ts's threadsEnabled gate), delivery falls back to platformId,
+  // which is the user-handle form this module produces ("matrix:@user:server")
+  // for messaging-group identification. Left unresolved, decodeThreadId
+  // doesn't throw on that shape (it's still "matrix:"-prefixed with a second
+  // segment) — it silently splits the handle into a bogus roomID/rootEventID
+  // pair, so the Matrix API call fails against a room that doesn't exist.
+  // Without this wrapping, add_reaction/edit_message never work in DMs.
+  adapter.editMessage = async (
+    threadId: string,
+    ...args: Parameters<typeof origEditMessage> extends [string, ...infer R] ? R : never
+  ) => {
+    const resolvedTid = await resolveThreadId(threadId);
+    return origEditMessage(resolvedTid, ...args);
+  };
+
+  // The underlying adapter's rawEmoji() is an identity function for string
+  // input — unlike Discord/GChat/Teams, `@beeper/chat-adapter-matrix` never
+  // normalizes named emoji (e.g. "thumbs_up", the convention every
+  // add_reaction caller uses — see core.ts's MCP tool) into an actual Unicode
+  // glyph. Left unconverted, the literal name is sent as the reaction's
+  // `m.relates_to.key`, so Matrix clients render a chip with the text
+  // "thumbs_up" instead of 👍. `defaultEmojiResolver` is the same shared
+  // lookup table Discord's adapter uses (via toDiscord, which is just an
+  // alias for toGChat).
+  //
+  // `toGChat()` alone isn't enough: it looks up `emojiMap[name]` by the
+  // resolver's *normalized* key only (e.g. "check"), not by any Slack-style
+  // shortcode alias (e.g. "white_check_mark", "heavy_check_mark") — those
+  // aliases live in a separate reverse map that only `fromSlack()`
+  // consults. Callers (including the add_reaction MCP tool's own example,
+  // "check") send either form, so an un-normalized shortcode misses the
+  // map and toGChat returns the name unchanged, producing the literal-text
+  // chip. Routing through fromSlack() first normalizes both shortcode and
+  // already-normalized input to the same EmojiValue; toGChat() then always
+  // matches. A raw Unicode emoji not in the map survives both calls
+  // unchanged.
+  adapter.addReaction = async (
+    threadId: string,
+    ...args: Parameters<typeof origAddReaction> extends [string, ...infer R] ? R : never
+  ) => {
+    const resolvedTid = await resolveThreadId(threadId);
+    const [messageId, emoji] = args;
+    // fromSlack() only accepts strings; callers may also pass an EmojiValue directly.
+    const normalized = typeof emoji === 'string' ? defaultEmojiResolver.fromSlack(emoji) : emoji;
+    const glyph = defaultEmojiResolver.toGChat(normalized);
+    return origAddReaction(resolvedTid, messageId, glyph);
   };
 
   return adapter;
