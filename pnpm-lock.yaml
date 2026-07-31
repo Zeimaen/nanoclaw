@@ -4,13 +4,20 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-ScIP07y4wBd0QnhiwL1ldPHXk9eRcRDrvlKPPKKABlk=
+
+patchedDependencies:
+  '@beeper/chat-adapter-matrix@0.2.0':
+    hash: 8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6
+    path: patches/@beeper__chat-adapter-matrix@0.2.0.patch
+
 importers:
 
   .:
     dependencies:
       '@beeper/chat-adapter-matrix':
         specifier: 0.2.0
-        version: 0.2.0
+        version: 0.2.0(patch_hash=8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6)
       '@chat-adapter/discord':
         specifier: 4.29.0
         version: 4.29.0
@@ -1799,10 +1806,11 @@ snapshots:
 
   '@babel/runtime@8.0.0': {}
 
-  '@beeper/chat-adapter-matrix@0.2.0':
+  '@beeper/chat-adapter-matrix@0.2.0(patch_hash=8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6)':
     dependencies:
       '@chat-adapter/state-memory': 4.35.0
       '@chat-adapter/state-redis': 4.35.0
+      '@matrix-org/matrix-sdk-crypto-wasm': 18.4.0
       chat: 4.29.0
       marked: 15.0.12
       matrix-js-sdk: 41.9.0
