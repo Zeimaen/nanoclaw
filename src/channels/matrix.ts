@@ -171,8 +171,22 @@ function wrapWithSelfCrossSigning(adapter: ReturnType<typeof createMatrixAdapter
  *      a local KV read, no network) checked against the locally-loaded room
  *      list — the adapter's own happy path, minus its destructive
  *      clear-on-miss side effect.
- *   2. Live `m.direct` from the server — catches a real room that just
- *      isn't locally loaded yet (the original fix's case).
+ *   2. Live `m.direct` from the server. This account-data key is an
+ *      accumulating array that matrix-js-sdk appends to but never prunes —
+ *      an account that ever hit the original duplicate-room bug (or had the
+ *      human start a fresh DM from their own client, which never updates
+ *      *this* account's m.direct) can carry several dead room IDs alongside
+ *      the one real, currently-joined room, in no particular order.
+ *      Confirmed against matrix.org after exactly this: one bot account's
+ *      m.direct held 4 room IDs for one human, joined to only the last one
+ *      — a naive first-match scan (the original version of this tier)
+ *      picked the first, long-dead room and every send 403'd forever. So
+ *      this does two passes: first look for a room we can *confirm* we're
+ *      still in (locally loaded, join/invite membership) anywhere in the
+ *      list, and self-heal the persisted pointer to it when found. Only if
+ *      nothing confirms do we fall back to the original "not loaded locally
+ *      yet" leniency (the genuinely-new-room case from the first fix),
+ *      taking the first such candidate.
  *   3. If we have a persisted room id but neither check above could
  *      *confirm* it (tier 1 said not-yet-loaded/unclear, tier 2's network
  *      call itself failed), reuse it anyway rather than mint a duplicate — a
@@ -206,17 +220,38 @@ function wrapWithFreshDmLookup(adapter: ReturnType<typeof createMatrixAdapter>):
       }
     }
 
-    // Tier 2: live server m.direct.
+    // Tier 2: live server m.direct. `m.direct[userId]` is an accumulating
+    // array — matrix-js-sdk appends new rooms but never prunes stale ones,
+    // so an account that has ever hit the duplicate-room bug (or had the
+    // human start a fresh DM from their own client, which this bot's own
+    // m.direct never learns about until it appears here) can carry several
+    // dead room IDs alongside the one real, currently-joined room, in any
+    // order. Two passes: first look for a room we can *confirm* we're still
+    // in (locally loaded with join/invite membership) — if the human's
+    // current room is anywhere in the list, this finds it regardless of
+    // position. Only if nothing confirms do we fall back to the original
+    // "not loaded locally yet" leniency (the genuinely-new-room case from
+    // the first fix), taking the first such candidate.
     try {
       const direct = await client.getAccountDataFromServer('m.direct');
       const roomIds = direct && Array.isArray(direct[userId]) ? direct[userId] : [];
+      let unconfirmedCandidate: string | undefined;
       for (const roomID of roomIds) {
         if (typeof roomID !== 'string' || !roomID) continue;
         const room = client.getRoom(roomID);
         const membership = room?.getMyMembership?.();
-        if (!room || membership === 'join' || membership === 'invite') {
+        if (membership === 'join' || membership === 'invite') {
+          try {
+            await (adapter as any).persistDMRoomID?.(userId, roomID);
+          } catch {
+            // best-effort self-heal of the persisted pointer; Tier 2 still succeeds
+          }
           return adapter.encodeThreadId({ roomID });
         }
+        if (!room && !unconfirmedCandidate) unconfirmedCandidate = roomID;
+      }
+      if (unconfirmedCandidate) {
+        return adapter.encodeThreadId({ roomID: unconfirmedCandidate });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
