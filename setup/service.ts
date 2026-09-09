@@ -138,8 +138,9 @@ function setupLaunchd(projectRoot: string, nodePath: string, homeDir: string): v
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>${projectRoot}/node_modules/.bin/tsx ${projectRoot}/scripts/matrix-e2ee-rotate-device.ts &amp;&amp; exec ${nodePath} ${projectRoot}/dist/index.js</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${projectRoot}</string>
@@ -308,6 +309,13 @@ After=network.target
 
 [Service]
 Type=simple
+# Matrix E2EE device identity is memory-only (see
+# scripts/matrix-e2ee-rotate-device.ts) — every start must rotate the device
+# ID before the host boots, or a same-device-ID reboot corrupts crypto state.
+# Runs on every start (manual restart, reboot, and systemd's own
+# Restart=always crash-restart alike) so this can never be skipped. No-op if
+# no Matrix instance has E2EE enabled.
+ExecStartPre=${projectRoot}/node_modules/.bin/tsx ${projectRoot}/scripts/matrix-e2ee-rotate-device.ts
 ExecStart=${nodePath} ${projectRoot}/dist/index.js
 WorkingDirectory=${projectRoot}
 Restart=always
@@ -435,6 +443,12 @@ function setupNohupFallback(projectRoot: string, nodePath: string, homeDir: stri
     '    sleep 2',
     '  fi',
     'fi',
+    '',
+    '# Matrix E2EE device identity is memory-only (see',
+    '# scripts/matrix-e2ee-rotate-device.ts) — must run before every start, or a',
+    '# same-device-ID reboot corrupts crypto state. No-op if no Matrix instance',
+    '# has E2EE enabled. set -e above means a real failure here aborts the start.',
+    `${JSON.stringify(projectRoot + '/node_modules/.bin/tsx')} ${JSON.stringify(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}`,
     '',
     'echo "Starting NanoClaw..."',
     `nohup ${JSON.stringify(nodePath)} ${JSON.stringify(projectRoot + '/dist/index.js')} \\`,

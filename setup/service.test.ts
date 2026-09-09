@@ -21,8 +21,9 @@ function generatePlist(nodePath: string, projectRoot: string, homeDir: string): 
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>${projectRoot}/node_modules/.bin/tsx ${projectRoot}/scripts/matrix-e2ee-rotate-device.ts &amp;&amp; exec ${nodePath} ${projectRoot}/dist/index.js</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${projectRoot}</string>
@@ -52,6 +53,7 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=${projectRoot}/node_modules/.bin/tsx ${projectRoot}/scripts/matrix-e2ee-rotate-device.ts
 ExecStart=${nodePath} ${projectRoot}/dist/index.js
 WorkingDirectory=${projectRoot}
 Restart=always
@@ -76,7 +78,7 @@ describe('plist generation', () => {
 
   it('uses the correct node path', () => {
     const plist = generatePlist('/opt/node/bin/node', '/home/user/nanoclaw', '/home/user');
-    expect(plist).toContain('<string>/opt/node/bin/node</string>');
+    expect(plist).toContain('exec /opt/node/bin/node /home/user/nanoclaw/dist/index.js');
   });
 
   it('points to dist/index.js', () => {
@@ -88,6 +90,11 @@ describe('plist generation', () => {
     const plist = generatePlist('/usr/local/bin/node', '/home/user/nanoclaw', '/home/user');
     expect(plist).toContain('nanoclaw.log');
     expect(plist).toContain('nanoclaw.error.log');
+  });
+
+  it('rotates the Matrix E2EE device id before exec-ing into node', () => {
+    const plist = generatePlist('/usr/local/bin/node', '/home/user/nanoclaw', '/home/user');
+    expect(plist).toContain('matrix-e2ee-rotate-device.ts &amp;&amp; exec /usr/local/bin/node');
   });
 });
 
@@ -117,6 +124,15 @@ describe('systemd unit generation', () => {
     const unit = generateSystemdUnit('/usr/bin/node', '/srv/nanoclaw', '/home/user', false);
     expect(unit).toContain('ExecStart=/usr/bin/node /srv/nanoclaw/dist/index.js');
   });
+
+  it('rotates the Matrix E2EE device id before every start via ExecStartPre', () => {
+    const unit = generateSystemdUnit('/usr/bin/node', '/srv/nanoclaw', '/home/user', false);
+    expect(unit).toContain(
+      'ExecStartPre=/srv/nanoclaw/node_modules/.bin/tsx /srv/nanoclaw/scripts/matrix-e2ee-rotate-device.ts',
+    );
+    // Must precede ExecStart so rotation always completes before the host boots.
+    expect(unit.indexOf('ExecStartPre=')).toBeLessThan(unit.indexOf('ExecStart='));
+  });
 });
 
 describe('WSL nohup fallback', () => {
@@ -129,6 +145,7 @@ describe('WSL nohup fallback', () => {
     const wrapper = `#!/bin/bash
 set -euo pipefail
 cd ${JSON.stringify(projectRoot)}
+${JSON.stringify(projectRoot + '/node_modules/.bin/tsx')} ${JSON.stringify(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}
 nohup ${JSON.stringify(nodePath)} ${JSON.stringify(projectRoot)}/dist/index.js >> ${JSON.stringify(projectRoot)}/logs/nanoclaw.log 2>> ${JSON.stringify(projectRoot)}/logs/nanoclaw.error.log &
 echo $! > ${JSON.stringify(pidFile)}`;
 
@@ -136,5 +153,19 @@ echo $! > ${JSON.stringify(pidFile)}`;
     expect(wrapper).toContain('nohup');
     expect(wrapper).toContain(nodePath);
     expect(wrapper).toContain('nanoclaw.pid');
+  });
+
+  it('rotates the Matrix E2EE device id before starting', () => {
+    const projectRoot = '/home/user/nanoclaw';
+    const wrapper = `#!/bin/bash
+set -euo pipefail
+cd ${JSON.stringify(projectRoot)}
+${JSON.stringify(projectRoot + '/node_modules/.bin/tsx')} ${JSON.stringify(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}
+nohup /usr/bin/node ${JSON.stringify(projectRoot)}/dist/index.js &`;
+
+    const rotateIdx = wrapper.indexOf('matrix-e2ee-rotate-device.ts');
+    const nohupIdx = wrapper.indexOf('nohup');
+    expect(rotateIdx).toBeGreaterThan(-1);
+    expect(rotateIdx).toBeLessThan(nohupIdx);
   });
 });

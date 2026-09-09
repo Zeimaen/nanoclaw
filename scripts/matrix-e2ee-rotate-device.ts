@@ -2,6 +2,16 @@
  * scripts/matrix-e2ee-rotate-device.ts — run before restarting the NanoClaw
  * host if ANY Matrix instance has E2EE enabled (`<PREFIX>_RECOVERY_KEY` set).
  *
+ * Wired in as an ExecStartPre (systemd) / ProgramArguments pre-step (launchd)
+ * / leading step (nohup wrapper) by `setup/service.ts`, so every host start —
+ * manual `systemctl`/`launchctl` restart, a reboot, and systemd's own
+ * Restart=always crash-restart alike — runs this first automatically. No-op
+ * (exits 0 immediately) when no instance has E2EE enabled. Manual invocation
+ * is for troubleshooting only; you should not normally need to run this by
+ * hand — if you find yourself doing so regularly, check that this install's
+ * service config actually has the pre-step (re-run `/setup`'s service step,
+ * or diff against a fresh `setup/service.ts` generation, to restore it).
+ *
  * Why this exists: the Matrix crypto store is memory-only (see
  * forceInMemoryE2EEStore in src/channels/matrix.ts — Node/Bun have no
  * IndexedDB, and that's the library's only persistent option). Every host
