@@ -131,6 +131,8 @@ export async function requestSenderApproval(input: RequestSenderApprovalInput): 
         question,
         options,
       }),
+      undefined,
+      target.messagingGroup.instance,
     );
     log.info('Unknown-sender approval card delivered', {
       approvalId,

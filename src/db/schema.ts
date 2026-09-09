@@ -210,6 +210,11 @@ CREATE TABLE IF NOT EXISTS destinations (
   type            TEXT NOT NULL,   -- 'channel' | 'agent'
   channel_type    TEXT,            -- for type='channel'
   platform_id     TEXT,            -- for type='channel'
+  -- Adapter instance that owns this chat, when N adapters of one channel
+  -- type are registered (e.g. two Matrix bot accounts). NULL means the
+  -- default instance. Disambiguates (channel_type, platform_id) pairs that
+  -- collide across instances, e.g. two bots DMing the same external user.
+  instance        TEXT,
   agent_group_id  TEXT             -- for type='agent'
 );
 
@@ -222,6 +227,7 @@ CREATE TABLE IF NOT EXISTS session_routing (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
   channel_type TEXT,
   platform_id  TEXT,
+  instance     TEXT,
   thread_id    TEXT
 );
 `;
@@ -238,6 +244,9 @@ CREATE TABLE IF NOT EXISTS messages_out (
   kind           TEXT NOT NULL,
   platform_id    TEXT,
   channel_type   TEXT,
+  -- Adapter instance the message must go out on (see destinations.instance
+  -- above). NULL falls back to delivery.ts's default-instance-first lookup.
+  instance       TEXT,
   thread_id      TEXT,
   content        TEXT NOT NULL
 );

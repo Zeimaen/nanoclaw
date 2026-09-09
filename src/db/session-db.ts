@@ -42,14 +42,20 @@ export function openOutboundDbRw(dbPath: string): Database.Database {
 
 export function upsertSessionRouting(
   db: Database.Database,
-  routing: { channel_type: string | null; platform_id: string | null; thread_id: string | null },
+  routing: {
+    channel_type: string | null;
+    platform_id: string | null;
+    instance: string | null;
+    thread_id: string | null;
+  },
 ): void {
   db.prepare(
-    `INSERT INTO session_routing (id, channel_type, platform_id, thread_id)
-     VALUES (1, @channel_type, @platform_id, @thread_id)
+    `INSERT INTO session_routing (id, channel_type, platform_id, instance, thread_id)
+     VALUES (1, @channel_type, @platform_id, @instance, @thread_id)
      ON CONFLICT(id) DO UPDATE SET
        channel_type = excluded.channel_type,
        platform_id  = excluded.platform_id,
+       instance     = excluded.instance,
        thread_id    = excluded.thread_id`,
   ).run(routing);
 }
@@ -60,6 +66,7 @@ export interface DestinationRow {
   type: 'channel' | 'agent';
   channel_type: string | null;
   platform_id: string | null;
+  instance: string | null;
   agent_group_id: string | null;
 }
 
@@ -67,12 +74,39 @@ export function replaceDestinations(db: Database.Database, entries: DestinationR
   const tx = db.transaction((rows: DestinationRow[]) => {
     db.prepare('DELETE FROM destinations').run();
     const stmt = db.prepare(
-      `INSERT INTO destinations (name, display_name, type, channel_type, platform_id, agent_group_id)
-       VALUES (@name, @display_name, @type, @channel_type, @platform_id, @agent_group_id)`,
+      `INSERT INTO destinations (name, display_name, type, channel_type, platform_id, instance, agent_group_id)
+       VALUES (@name, @display_name, @type, @channel_type, @platform_id, @instance, @agent_group_id)`,
     );
     for (const row of rows) stmt.run(row);
   });
   tx(entries);
+}
+
+/**
+ * LEGACY-COMPAT: `instance` was added to `destinations` after the initial
+ * v2 schema. Existing session DBs created before this need the column
+ * retrofitted before replaceDestinations()'s INSERT can name it.
+ */
+export function migrateDestinationsTable(db: Database.Database): void {
+  const cols = new Set(
+    (db.prepare("PRAGMA table_info('destinations')").all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!cols.has('instance')) {
+    db.prepare('ALTER TABLE destinations ADD COLUMN instance TEXT').run();
+  }
+}
+
+/**
+ * LEGACY-COMPAT: `instance` was added to `session_routing` after the
+ * initial v2 schema. Same rationale as migrateDestinationsTable.
+ */
+export function migrateSessionRoutingTable(db: Database.Database): void {
+  const cols = new Set(
+    (db.prepare("PRAGMA table_info('session_routing')").all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!cols.has('instance')) {
+    db.prepare('ALTER TABLE session_routing ADD COLUMN instance TEXT').run();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +285,7 @@ export interface OutboundMessage {
   kind: string;
   platform_id: string | null;
   channel_type: string | null;
+  instance: string | null;
   thread_id: string | null;
   content: string;
   in_reply_to: string | null;

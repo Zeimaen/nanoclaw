@@ -32,7 +32,7 @@
  * channel on repeated calls, so re-resolving after a cache miss is always
  * safe — worst case we round-trip redundantly.
  */
-import { getChannelAdapter } from '../../channels/channel-registry.js';
+import { getChannelAdapter, getChannelAdapterExact } from '../../channels/channel-registry.js';
 import { getMessagingGroup, getMessagingGroupByPlatform, createMessagingGroup } from '../../db/messaging-groups.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, User } from '../../types.js';
@@ -47,9 +47,19 @@ import { getUserDm, upsertUserDm } from './db/user-dms.js';
  *   - the channel needs openDM but its adapter doesn't implement it
  *   - openDM throws (platform error, user blocked bot, etc.)
  *
+ * `instance` scopes resolution to a specific adapter instance — needed
+ * because a channel's user id doesn't carry the instance (Matrix's
+ * `matrix:@user:server` is identical whether the message came via the
+ * `matrix` or `matrix2` bot). Without it, a human reachable through several
+ * instances of the same channel_type would collapse onto whichever instance
+ * happened to resolve — and cache — first, silently misrouting every other
+ * instance's cold-DMs (approvals included) to that one instance. Defaults to
+ * `channelType` — the "default instance" convention used throughout — so
+ * single-instance callers are unaffected.
+ *
  * Callers should treat null as "this user is unreachable on this channel".
  */
-export async function ensureUserDm(userId: string): Promise<MessagingGroup | null> {
+export async function ensureUserDm(userId: string, instance?: string): Promise<MessagingGroup | null> {
   const user = getUser(userId);
   if (!user) {
     log.warn('ensureUserDm: user not found', { userId });
@@ -61,9 +71,10 @@ export async function ensureUserDm(userId: string): Promise<MessagingGroup | nul
     log.warn('ensureUserDm: user id not namespaced', { userId });
     return null;
   }
+  const resolvedInstance = instance ?? channelType;
 
   // Cache hit: existing user_dms row → load and return the messaging_group.
-  const cached = getUserDm(userId, channelType);
+  const cached = getUserDm(userId, channelType, resolvedInstance);
   if (cached) {
     const mg = getMessagingGroup(cached.messaging_group_id);
     if (mg) return mg;
@@ -75,19 +86,20 @@ export async function ensureUserDm(userId: string): Promise<MessagingGroup | nul
   }
 
   // Cache miss: resolve the DM platform_id either via openDM or directly.
-  const dmPlatformId = await resolveDmPlatformId(channelType, handle);
+  const dmPlatformId = await resolveDmPlatformId(channelType, handle, resolvedInstance);
   if (!dmPlatformId) return null;
 
   // Find-or-create the underlying messaging_group. A DM we received
-  // earlier may already have a row matching (channel_type, platform_id).
+  // earlier may already have a row matching (channel_type, platform_id, instance).
   const now = new Date().toISOString();
-  let mg = getMessagingGroupByPlatform(channelType, dmPlatformId);
+  let mg = getMessagingGroupByPlatform(channelType, dmPlatformId, resolvedInstance);
   if (!mg) {
     const mgId = `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     mg = {
       id: mgId,
       channel_type: channelType,
       platform_id: dmPlatformId,
+      instance: resolvedInstance,
       name: user.display_name,
       is_group: 0,
       // Deliberately 'strict', NOT the channel's declared DM policy: this row
@@ -101,6 +113,7 @@ export async function ensureUserDm(userId: string): Promise<MessagingGroup | nul
     log.info('ensureUserDm: created DM messaging_group', {
       userId,
       channelType,
+      instance: resolvedInstance,
       messagingGroupId: mgId,
     });
   }
@@ -108,6 +121,7 @@ export async function ensureUserDm(userId: string): Promise<MessagingGroup | nul
   upsertUserDm({
     user_id: userId,
     channel_type: channelType,
+    instance: resolvedInstance,
     messaging_group_id: mg.id,
     resolved_at: now,
   });
@@ -118,11 +132,16 @@ export async function ensureUserDm(userId: string): Promise<MessagingGroup | nul
 /**
  * Call the adapter's openDM if it has one; otherwise fall through to using
  * the handle directly. Returns null if the adapter is missing entirely.
+ *
+ * Tries the exact instance first — the correct bot identity for a named
+ * instance — falling back to the tolerant channelType scan only when that
+ * exact instance isn't live, preserving existing offline-adapter handling
+ * for single-instance channels.
  */
-async function resolveDmPlatformId(channelType: string, handle: string): Promise<string | null> {
-  const adapter = getChannelAdapter(channelType);
+async function resolveDmPlatformId(channelType: string, handle: string, instance: string): Promise<string | null> {
+  const adapter = getChannelAdapterExact(instance) ?? getChannelAdapter(channelType);
   if (!adapter) {
-    log.warn('ensureUserDm: no adapter for channel', { channelType });
+    log.warn('ensureUserDm: no adapter for channel', { channelType, instance });
     return null;
   }
   if (!adapter.openDM) {
@@ -132,7 +151,7 @@ async function resolveDmPlatformId(channelType: string, handle: string): Promise
   try {
     return await adapter.openDM(handle);
   } catch (err) {
-    log.error('ensureUserDm: adapter.openDM failed', { channelType, handle, err });
+    log.error('ensureUserDm: adapter.openDM failed', { channelType, instance, handle, err });
     return null;
   }
 }

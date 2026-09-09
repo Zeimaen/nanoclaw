@@ -162,15 +162,24 @@ export function pickApprover(agentGroupId: string | null): string[] {
  * Tie-break: prefer approvers reachable on the same channel kind as the
  * origin; else first in list. Resolution uses ensureUserDm, which may
  * trigger a platform openDM call on cache miss.
+ *
+ * `originInstance` scopes the channel-kind-matched branch to the origin's
+ * specific adapter instance (e.g. Matrix's `matrix` vs `matrix2`) — without
+ * it, ensureUserDm can't tell two same-channel-type instances apart for a
+ * human reachable on both, and silently delivers through whichever instance
+ * happened to resolve first. Only meaningful in the first branch: it's the
+ * origin's own instance, so it doesn't apply once we've fallen through to
+ * "any reachable approver on any channel."
  */
 export async function pickApprovalDelivery(
   approvers: string[],
   originChannelType: string,
+  originInstance?: string,
 ): Promise<{ userId: string; messagingGroup: MessagingGroup } | null> {
   if (originChannelType) {
     for (const userId of approvers) {
       if (channelTypeOf(userId) !== originChannelType) continue;
-      const mg = await ensureUserDm(userId);
+      const mg = await ensureUserDm(userId, originInstance);
       if (mg) return { userId, messagingGroup: mg };
     }
   }
@@ -235,11 +244,10 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     return;
   }
 
-  const originChannelType = session.messaging_group_id
-    ? (getMessagingGroup(session.messaging_group_id)?.channel_type ?? '')
-    : '';
+  const originMg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+  const originChannelType = originMg?.channel_type ?? '';
 
-  const target = await pickApprovalDelivery(approvers, originChannelType);
+  const target = await pickApprovalDelivery(approvers, originChannelType, originMg?.instance);
   if (!target) {
     notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
     return;
@@ -274,6 +282,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
           question,
           options: APPROVAL_OPTIONS,
         }),
+        undefined,
+        target.messagingGroup.instance,
       );
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });

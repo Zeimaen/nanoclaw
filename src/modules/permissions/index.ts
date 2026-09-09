@@ -484,6 +484,8 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
           question: 'Which agent should handle this channel?',
           options,
         }),
+        undefined,
+        approverDm.instance,
       );
     } catch (err) {
       log.error('Channel registration: agent-selection card delivery failed', {
@@ -526,6 +528,8 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
         null,
         'chat-sdk',
         JSON.stringify({ text: 'Reply with the name for your new agent:' }),
+        undefined,
+        approverDm.instance,
       );
     } catch (err) {
       log.error('Channel registration: name prompt delivery failed', {
@@ -629,6 +633,8 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
               ? `✅ Agent "${ag.name}" created and connected.`
               : `⚠️ Agent "${ag.name}" was created but the channel couldn't be connected — check the host logs.`,
           }),
+          undefined,
+          dm.instance,
         )
         .catch(() => {});
     }

@@ -3,6 +3,21 @@ onlyBuiltDependencies:
   - esbuild
   - protobufjs
   - sharp
+# @beeper/chat-adapter-matrix@0.2.0 uses @matrix-org/matrix-sdk-crypto-wasm
+# (added by the patch above, to decrypt E2EE media attachments) but doesn't
+# declare it as a dependency — it's normally only reachable transitively via
+# matrix-js-sdk's own crypto backend. packageExtensions fixes the *resolved*
+# manifest pnpm uses to build the dependency graph, so the package gets it
+# linked into its own isolated node_modules. patchedDependencies alone can't
+# do this: it only rewrites files after linking already happened, so an
+# edit to the patched package's package.json "dependencies" field has no
+# effect on what gets linked.
+packageExtensions:
+  '@beeper/chat-adapter-matrix@0.2.0':
+    dependencies:
+      '@matrix-org/matrix-sdk-crypto-wasm': '18.4.0'
+patchedDependencies:
+  '@beeper/chat-adapter-matrix@0.2.0': patches/@beeper__chat-adapter-matrix@0.2.0.patch
 
 pnpm:
   minimumReleaseAge: 4320

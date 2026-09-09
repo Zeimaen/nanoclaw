@@ -20,6 +20,7 @@
  */
 import type { InboundEvent } from '../../channels/adapter.js';
 import { getDeliveryAdapter } from '../../delivery.js';
+import { getMessagingGroup } from '../../db/messaging-groups.js';
 import {
   deletePendingApproval,
   getExpiredAwaitingReasonApprovals,
@@ -83,7 +84,14 @@ function extractText(event: InboundEvent): string {
  * finalize a plain reject immediately rather than strand the requesting agent.
  */
 export async function armReasonCapture(approval: PendingApproval, session: Session, userId: string): Promise<void> {
-  const dm = userId ? await ensureUserDm(userId) : null;
+  // Same origin-instance reasoning as requestApproval (primitive.ts): reuse
+  // the requesting session's adapter instance so a multi-instance channel
+  // (e.g. Matrix's `matrix` vs `matrix2`) re-reaches the approver on the
+  // instance the original card went out on, not an arbitrary sibling.
+  const originInstance = session.messaging_group_id
+    ? getMessagingGroup(session.messaging_group_id)?.instance
+    : undefined;
+  const dm = userId ? await ensureUserDm(userId, originInstance) : null;
   const adapter = getDeliveryAdapter();
   if (!dm || !adapter) {
     log.warn('reject-with-reason: cannot reach approver, finalizing plain reject', {
@@ -97,7 +105,15 @@ export async function armReasonCapture(approval: PendingApproval, session: Sessi
   }
 
   try {
-    await adapter.deliver(dm.channel_type, dm.platform_id, null, 'chat-sdk', JSON.stringify({ text: PROMPT_TEXT }));
+    await adapter.deliver(
+      dm.channel_type,
+      dm.platform_id,
+      null,
+      'chat-sdk',
+      JSON.stringify({ text: PROMPT_TEXT }),
+      undefined,
+      dm.instance,
+    );
   } catch (err) {
     log.error('reject-with-reason: reason prompt delivery failed, finalizing plain reject', {
       approvalId: approval.approval_id,

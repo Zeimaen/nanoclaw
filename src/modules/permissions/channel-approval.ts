@@ -274,6 +274,8 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
         question,
         options,
       }),
+      undefined,
+      delivery.messagingGroup.instance,
     );
     log.info('Channel registration card delivered', {
       messagingGroupId,

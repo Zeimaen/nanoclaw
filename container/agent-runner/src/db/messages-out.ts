@@ -5,6 +5,7 @@
  * The host polls this DB (read-only) for undelivered messages.
  */
 import { getInboundDb, getOutboundDb } from './connection.js';
+import { loadConfig } from '../config.js';
 
 export interface MessageOutRow {
   id: string;
@@ -16,6 +17,7 @@ export interface MessageOutRow {
   kind: string;
   platform_id: string | null;
   channel_type: string | null;
+  instance: string | null;
   thread_id: string | null;
   content: string;
 }
@@ -28,6 +30,7 @@ export interface WriteMessageOut {
   kind: string;
   platform_id?: string | null;
   channel_type?: string | null;
+  instance?: string | null;
   thread_id?: string | null;
   content: string;
 }
@@ -57,8 +60,8 @@ export function writeMessageOut(msg: WriteMessageOut): number {
   // in the JS object keys (better-sqlite3 auto-stripped it, bun:sqlite does not).
   outbound
     .prepare(
-      `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, thread_id, content)
-     VALUES ($id, $seq, $in_reply_to, $timestamp, $deliver_after, $recurrence, $kind, $platform_id, $channel_type, $thread_id, $content)`,
+      `INSERT INTO messages_out (id, seq, in_reply_to, timestamp, deliver_after, recurrence, kind, platform_id, channel_type, instance, thread_id, content)
+     VALUES ($id, $seq, $in_reply_to, $timestamp, $deliver_after, $recurrence, $kind, $platform_id, $channel_type, $instance, $thread_id, $content)`,
     )
     .run({
       $id: msg.id,
@@ -70,6 +73,7 @@ export function writeMessageOut(msg: WriteMessageOut): number {
       $kind: msg.kind,
       $platform_id: msg.platform_id ?? null,
       $channel_type: msg.channel_type ?? null,
+      $instance: msg.instance ?? null,
       $thread_id: msg.thread_id ?? null,
       $content: msg.content,
     });
@@ -81,8 +85,14 @@ export function writeMessageOut(msg: WriteMessageOut): number {
  * Look up a message's platform ID by seq number.
  * Searches both inbound and outbound DBs since seq spans both.
  *
- * For inbound messages, the Chat SDK message ID is already the platform message ID
- * (e.g., "6037840640:42" for Telegram).
+ * For inbound messages, messages_in.id is the platform message ID
+ * (e.g., "6037840640:42" for Telegram) namespaced with a trailing
+ * ":<agentGroupId>" by the host's messageIdForAgent() (router.ts) — done to
+ * keep the PK unique when one inbound message fans out to multiple
+ * agent-group sessions. That suffix must be stripped here, or edit_message
+ * / add_reaction send a message ID the platform has never seen (Matrix
+ * rejects it outright with "Can't send relation to unknown event"; other
+ * platforms may silently misfire).
  *
  * For outbound messages, the internal ID (msg-xxx) won't work for edits/reactions.
  * Instead, look up the platform_message_id from the delivered table (host writes this
@@ -91,11 +101,15 @@ export function writeMessageOut(msg: WriteMessageOut): number {
 export function getMessageIdBySeq(seq: number): string | null {
   const inbound = getInboundDb();
 
-  // Inbound messages: ID is already the platform message ID
+  // Inbound messages: ID is the platform message ID plus a ":<agentGroupId>" suffix.
   const inRow = inbound.prepare('SELECT id FROM messages_in WHERE seq = ?').get(seq) as
     | { id: string }
     | undefined;
-  if (inRow) return inRow.id;
+  if (inRow) {
+    const { agentGroupId } = loadConfig();
+    const suffix = `:${agentGroupId}`;
+    return agentGroupId && inRow.id.endsWith(suffix) ? inRow.id.slice(0, -suffix.length) : inRow.id;
+  }
 
   // Outbound messages: look up platform message ID from delivered table
   const outRow = getOutboundDb().prepare('SELECT id FROM messages_out WHERE seq = ?').get(seq) as
@@ -119,16 +133,20 @@ export function getMessageIdBySeq(seq: number): string | null {
  */
 export function getRoutingBySeq(
   seq: number,
-): { channel_type: string | null; platform_id: string | null; thread_id: string | null } | null {
+): { channel_type: string | null; platform_id: string | null; instance: string | null; thread_id: string | null } | null {
   const inbound = getInboundDb();
-  const inRow = inbound
-    .prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE seq = ?')
-    .get(seq) as { channel_type: string | null; platform_id: string | null; thread_id: string | null } | undefined;
-  if (inRow) return inRow;
+  // messages_in has no instance column — inbound is always a single specific
+  // adapter instance per session-wiring, so there's nothing to disambiguate.
+  const inRow = inbound.prepare('SELECT channel_type, platform_id, thread_id FROM messages_in WHERE seq = ?').get(seq) as
+    | { channel_type: string | null; platform_id: string | null; thread_id: string | null }
+    | undefined;
+  if (inRow) return { ...inRow, instance: null };
 
   const outRow = getOutboundDb()
-    .prepare('SELECT channel_type, platform_id, thread_id FROM messages_out WHERE seq = ?')
-    .get(seq) as { channel_type: string | null; platform_id: string | null; thread_id: string | null } | undefined;
+    .prepare('SELECT channel_type, platform_id, instance, thread_id FROM messages_out WHERE seq = ?')
+    .get(seq) as
+    | { channel_type: string | null; platform_id: string | null; instance: string | null; thread_id: string | null }
+    | undefined;
   return outRow ?? null;
 }
 

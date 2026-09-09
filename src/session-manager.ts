@@ -37,6 +37,8 @@ import {
   upsertSessionRouting,
   insertMessage,
   migrateMessagesInTable,
+  migrateDestinationsTable,
+  migrateSessionRoutingTable,
 } from './db/session-db.js';
 import { log } from './log.js';
 import type { Session } from './types.js';
@@ -179,11 +181,13 @@ export function writeSessionRouting(agentGroupId: string, sessionId: string): vo
 
   let channelType: string | null = null;
   let platformId: string | null = null;
+  let instance: string | null = null;
   if (session.messaging_group_id) {
     const mg = getMessagingGroup(session.messaging_group_id);
     if (mg) {
       channelType = mg.channel_type;
       platformId = mg.platform_id;
+      instance = mg.instance ?? null;
     }
   }
 
@@ -192,12 +196,13 @@ export function writeSessionRouting(agentGroupId: string, sessionId: string): vo
     upsertSessionRouting(db, {
       channel_type: channelType,
       platform_id: platformId,
+      instance,
       thread_id: session.thread_id,
     });
   } finally {
     db.close();
   }
-  log.debug('Session routing written', { sessionId, channelType, platformId, threadId: session.thread_id });
+  log.debug('Session routing written', { sessionId, channelType, platformId, instance, threadId: session.thread_id });
 }
 
 /**
@@ -376,6 +381,8 @@ function extractAttachmentFiles(
 export function openInboundDb(agentGroupId: string, sessionId: string): Database.Database {
   const db = openInboundDbRaw(inboundDbPath(agentGroupId, sessionId));
   migrateMessagesInTable(db);
+  migrateDestinationsTable(db);
+  migrateSessionRoutingTable(db);
   return db;
 }
 
