@@ -12,21 +12,12 @@
  * provider rewrite, no service changes. Provider install skills call this as
  * their auth step so there is exactly one auth implementation per provider.
  */
-import { execSync } from 'child_process';
-
+import { buildContainerImage } from './lib/container-build.js';
 import { getSetupProvider, listSetupProviders } from './providers/registry.js';
 import { applyProviderSkill } from './providers/install.js';
+import { getInstallableProviderDescriptor } from './providers/skill-descriptor.js';
 // Provider payloads self-register on import.
 import './providers/index.js';
-
-// Hard-wired install skills — the audited control surface (no branch
-// enumeration). Each `/add-<name>` SKILL.md is idempotent and self-skips when
-// the payload is already wired; it is applied in-process via the directive
-// engine (no shell-out to a drift-prone setup/add-<name>.sh). Codex is the only
-// manifest-style provider today.
-const INSTALL_SKILLS: Record<string, string> = {
-  codex: '.claude/skills/add-codex',
-};
 
 export async function run(args: string[]): Promise<void> {
   const name = args[0]?.trim().toLowerCase();
@@ -41,7 +32,7 @@ export async function run(args: string[]): Promise<void> {
   }
 
   let entry = getSetupProvider(name);
-  const skillDir = INSTALL_SKILLS[name];
+  const skillDir = getInstallableProviderDescriptor(name)?.skillDir;
   if (skillDir) {
     // Install OR refresh: the skill is idempotent and is also the upgrade path
     // — payload files resync and a bumped CLI-manifest pin replaces the local
@@ -57,7 +48,14 @@ export async function run(args: string[]): Promise<void> {
     }
     if (changed) {
       console.log('Provider payload installed — rebuilding the container image…');
-      execSync('./container/build.sh', { stdio: 'inherit' });
+      const rebuild = buildContainerImage();
+      if (!rebuild.ok) {
+        // Stop here rather than authenticating a runtime the image can't start:
+        // the payload files are mounted, but the CLI manifest is baked in.
+        console.error(`Couldn't rebuild the container image for ${name}: ${rebuild.message}`);
+        if (rebuild.hint) console.error(rebuild.hint);
+        process.exit(1);
+      }
     }
     if (!entry) {
       await import(`./providers/${name}.js`);

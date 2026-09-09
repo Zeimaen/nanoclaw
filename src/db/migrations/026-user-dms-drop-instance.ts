@@ -1,0 +1,72 @@
+import type Database from 'better-sqlite3';
+import type { Migration } from './index.js';
+
+/**
+ * Drop the fork-local `instance` column from `user_dms`, restoring the
+ * canonical `PRIMARY KEY (user_id, channel_type)`.
+ *
+ * This install carried a local `user-dms-instance` migration that keyed the
+ * cold-DM cache on the adapter instance. Upstream solved the same
+ * multi-instance problem differently: the cache stays un-keyed and holds only
+ * the DEFAULT instance, while named instances (`matrix2`, a second bot
+ * account) bypass the cache and resolve through `openDM` on every call — see
+ * the `cacheable` guard in `src/modules/permissions/user-dm.ts`. Upstream's
+ * `upsertUserDm` inserts without `instance` and does
+ * `ON CONFLICT(user_id, channel_type)`, which cannot work against the
+ * three-column primary key: the column is NOT NULL with no default, and there
+ * is no unique index matching that conflict target.
+ *
+ * Collapse rule: keep the row whose `instance` IS the default (instance =
+ * channel_type), because that is the only row upstream's cache would ever
+ * write. Named-instance rows are dropped, not merged — they become
+ * cache-bypass lookups, which is correct rather than lossy. Where a channel
+ * somehow has no default row, fall back to the most recently resolved one so
+ * the cache keeps a usable entry instead of losing the channel entirely.
+ *
+ * Recreate rather than `DROP COLUMN`: the column is part of the primary key,
+ * so the key itself has to be rebuilt. `disableForeignKeys` covers the
+ * DROP+RENAME window (user_dms references users and messaging_groups); the
+ * runner's `foreign_key_check` still runs inside the transaction, so a
+ * recreate that introduces a violation rolls back atomically.
+ *
+ * No-op on any DB that never had the column (a fresh install, or one seeded
+ * from upstream's canonical schema).
+ */
+export const migration026: Migration = {
+  version: 26,
+  name: 'user-dms-drop-instance',
+  sqliteOnly: true,
+  disableForeignKeys: true,
+  up: (db: Database.Database) => {
+    const columns = db.prepare('PRAGMA table_info(user_dms)').all() as { name: string }[];
+    if (!columns.some((column) => column.name === 'instance')) return;
+
+    db.exec(`
+      CREATE TABLE user_dms_new (
+        user_id            TEXT NOT NULL REFERENCES users(id),
+        channel_type       TEXT NOT NULL,
+        messaging_group_id TEXT NOT NULL REFERENCES messaging_groups(id),
+        resolved_at        TEXT NOT NULL,
+        PRIMARY KEY (user_id, channel_type)
+      );
+
+      -- One row per (user_id, channel_type): the default-instance row when it
+      -- exists, else the newest. ORDER BY puts the winner first; MIN(rowid)
+      -- over the ordered subquery is SQLite's stable "pick that first row".
+      INSERT INTO user_dms_new (user_id, channel_type, messaging_group_id, resolved_at)
+      SELECT user_id, channel_type, messaging_group_id, resolved_at
+      FROM (
+        SELECT user_id, channel_type, messaging_group_id, resolved_at,
+               ROW_NUMBER() OVER (
+                 PARTITION BY user_id, channel_type
+                 ORDER BY (instance = channel_type) DESC, resolved_at DESC
+               ) AS rank
+        FROM user_dms
+      )
+      WHERE rank = 1;
+
+      DROP TABLE user_dms;
+      ALTER TABLE user_dms_new RENAME TO user_dms;
+    `);
+  },
+};

@@ -1,31 +1,25 @@
 import type { UserDm } from '../../../types.js';
 import { getDb } from '../../../db/connection.js';
 
-export function upsertUserDm(row: UserDm): void {
-  getDb()
-    .prepare(
-      `INSERT INTO user_dms (user_id, channel_type, instance, messaging_group_id, resolved_at)
-       VALUES (@user_id, @channel_type, @instance, @messaging_group_id, @resolved_at)
-       ON CONFLICT(user_id, channel_type, instance) DO UPDATE SET
+export async function upsertUserDm(row: UserDm): Promise<void> {
+  await getDb().run(
+    `INSERT INTO user_dms (user_id, channel_type, messaging_group_id, resolved_at)
+       VALUES (@user_id, @channel_type, @messaging_group_id, @resolved_at)
+       ON CONFLICT(user_id, channel_type) DO UPDATE SET
          messaging_group_id = excluded.messaging_group_id,
          resolved_at = excluded.resolved_at`,
-    )
-    .run(row);
+    row,
+  );
 }
 
-/** `instance` defaults to `channelType` — the "default instance" convention used throughout. */
-export function getUserDm(userId: string, channelType: string, instance: string = channelType): UserDm | undefined {
-  return getDb()
-    .prepare('SELECT * FROM user_dms WHERE user_id = ? AND channel_type = ? AND instance = ?')
-    .get(userId, channelType, instance) as UserDm | undefined;
+export async function getUserDm(userId: string, channelType: string): Promise<UserDm | undefined> {
+  return getDb().get<UserDm>('SELECT * FROM user_dms WHERE user_id = ? AND channel_type = ?', userId, channelType);
 }
 
-export function getUserDmsForUser(userId: string): UserDm[] {
-  return getDb().prepare('SELECT * FROM user_dms WHERE user_id = ?').all(userId) as UserDm[];
+export async function getUserDmsForUser(userId: string): Promise<UserDm[]> {
+  return getDb().all<UserDm>('SELECT * FROM user_dms WHERE user_id = ?', userId);
 }
 
-export function deleteUserDm(userId: string, channelType: string, instance: string = channelType): void {
-  getDb()
-    .prepare('DELETE FROM user_dms WHERE user_id = ? AND channel_type = ? AND instance = ?')
-    .run(userId, channelType, instance);
+export async function deleteUserDm(userId: string, channelType: string): Promise<void> {
+  await getDb().run('DELETE FROM user_dms WHERE user_id = ? AND channel_type = ?', userId, channelType);
 }
