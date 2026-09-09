@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
 
 /**
@@ -30,18 +29,18 @@ import type { Migration } from './index.js';
  * recreate that introduces a violation rolls back atomically.
  *
  * No-op on any DB that never had the column (a fresh install, or one seeded
- * from upstream's canonical schema).
+ * from upstream's canonical schema) — probed through `columnOwners` rather
+ * than PRAGMA to stay inside the portable-migration policy.
  */
 export const migration026: Migration = {
   version: 26,
   name: 'user-dms-drop-instance',
-  sqliteOnly: true,
   disableForeignKeys: true,
-  up: (db: Database.Database) => {
-    const columns = db.prepare('PRAGMA table_info(user_dms)').all() as { name: string }[];
-    if (!columns.some((column) => column.name === 'instance')) return;
+  async up(db) {
+    const owners = (await db.columnOwners?.('instance')) ?? [];
+    if (!owners.includes('user_dms')) return;
 
-    db.exec(`
+    await db.exec(`
       CREATE TABLE user_dms_new (
         user_id            TEXT NOT NULL REFERENCES users(id),
         channel_type       TEXT NOT NULL,
@@ -51,19 +50,18 @@ export const migration026: Migration = {
       );
 
       -- One row per (user_id, channel_type): the default-instance row when it
-      -- exists, else the newest. ORDER BY puts the winner first; MIN(rowid)
-      -- over the ordered subquery is SQLite's stable "pick that first row".
+      -- exists, else the most recently resolved one.
       INSERT INTO user_dms_new (user_id, channel_type, messaging_group_id, resolved_at)
       SELECT user_id, channel_type, messaging_group_id, resolved_at
       FROM (
         SELECT user_id, channel_type, messaging_group_id, resolved_at,
                ROW_NUMBER() OVER (
                  PARTITION BY user_id, channel_type
-                 ORDER BY (instance = channel_type) DESC, resolved_at DESC
-               ) AS rank
+                 ORDER BY CASE WHEN instance = channel_type THEN 0 ELSE 1 END, resolved_at DESC
+               ) AS pick
         FROM user_dms
-      )
-      WHERE rank = 1;
+      ) ranked
+      WHERE pick = 1;
 
       DROP TABLE user_dms;
       ALTER TABLE user_dms_new RENAME TO user_dms;
