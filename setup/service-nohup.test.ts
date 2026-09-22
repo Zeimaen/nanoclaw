@@ -86,10 +86,14 @@ describe.runIf(process.platform === 'linux')('nohup service startup', () => {
   it('runs the Matrix E2EE rotation step before starting when present', async () => {
     fs.mkdirSync(path.join(host.root, 'node_modules/.bin'), { recursive: true });
     fs.mkdirSync(path.join(host.root, 'scripts'), { recursive: true });
+    // host.root itself contains shell metacharacters (see beforeEach) — quote
+    // with single quotes, not JSON.stringify, or bash reads $() as a real
+    // command substitution even inside the generated stub's double quotes.
     const marker = path.join(host.root, 'rotated.marker');
+    const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
     fs.writeFileSync(
       path.join(host.root, 'node_modules/.bin/tsx'),
-      `#!/bin/bash\necho rotated >> ${JSON.stringify(marker)}\n`,
+      `#!/bin/bash\necho rotated >> ${quote(marker)}\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(path.join(host.root, 'scripts/matrix-e2ee-rotate-device.ts'), '// stub\n');
