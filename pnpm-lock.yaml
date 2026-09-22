@@ -8,7 +8,7 @@ packageExtensionsChecksum: sha256-ScIP07y4wBd0QnhiwL1ldPHXk9eRcRDrvlKPPKKABlk=
 
 patchedDependencies:
   '@beeper/chat-adapter-matrix@0.2.0':
-    hash: 8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6
+    hash: d8f9cda088701285b3be191ea30edfd2e96ccb7b97f2934fa8c26c1fa424c020
     path: patches/@beeper__chat-adapter-matrix@0.2.0.patch
 
 importers:
@@ -17,7 +17,7 @@ importers:
     dependencies:
       '@beeper/chat-adapter-matrix':
         specifier: 0.2.0
-        version: 0.2.0(patch_hash=8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6)
+        version: 0.2.0(patch_hash=d8f9cda088701285b3be191ea30edfd2e96ccb7b97f2934fa8c26c1fa424c020)
       '@chat-adapter/discord':
         specifier: 4.29.0
         version: 4.29.0
@@ -1694,7 +1694,7 @@ snapshots:
 
   '@babel/runtime@8.0.0': {}
 
-  '@beeper/chat-adapter-matrix@0.2.0(patch_hash=8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6)':
+  '@beeper/chat-adapter-matrix@0.2.0(patch_hash=d8f9cda088701285b3be191ea30edfd2e96ccb7b97f2934fa8c26c1fa424c020)':
     dependencies:
       '@chat-adapter/state-memory': 4.40.0
       '@chat-adapter/state-redis': 4.40.0
