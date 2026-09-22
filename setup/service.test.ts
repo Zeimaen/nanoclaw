@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import path from 'path';
 
 import { getLaunchdLabel } from '../src/install-slug.js';
 
@@ -132,40 +131,5 @@ describe('systemd unit generation', () => {
     );
     // Must precede ExecStart so rotation always completes before the host boots.
     expect(unit.indexOf('ExecStartPre=')).toBeLessThan(unit.indexOf('ExecStart='));
-  });
-});
-
-describe('WSL nohup fallback', () => {
-  it('generates a valid wrapper script', () => {
-    const projectRoot = '/home/user/nanoclaw';
-    const nodePath = '/usr/bin/node';
-    const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-
-    // Simulate what service.ts generates
-    const wrapper = `#!/bin/bash
-set -euo pipefail
-cd ${JSON.stringify(projectRoot)}
-${JSON.stringify(projectRoot + '/node_modules/.bin/tsx')} ${JSON.stringify(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}
-nohup ${JSON.stringify(nodePath)} ${JSON.stringify(projectRoot)}/dist/index.js >> ${JSON.stringify(projectRoot)}/logs/nanoclaw.log 2>> ${JSON.stringify(projectRoot)}/logs/nanoclaw.error.log &
-echo $! > ${JSON.stringify(pidFile)}`;
-
-    expect(wrapper).toContain('#!/bin/bash');
-    expect(wrapper).toContain('nohup');
-    expect(wrapper).toContain(nodePath);
-    expect(wrapper).toContain('nanoclaw.pid');
-  });
-
-  it('rotates the Matrix E2EE device id before starting', () => {
-    const projectRoot = '/home/user/nanoclaw';
-    const wrapper = `#!/bin/bash
-set -euo pipefail
-cd ${JSON.stringify(projectRoot)}
-${JSON.stringify(projectRoot + '/node_modules/.bin/tsx')} ${JSON.stringify(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}
-nohup /usr/bin/node ${JSON.stringify(projectRoot)}/dist/index.js &`;
-
-    const rotateIdx = wrapper.indexOf('matrix-e2ee-rotate-device.ts');
-    const nohupIdx = wrapper.indexOf('nohup');
-    expect(rotateIdx).toBeGreaterThan(-1);
-    expect(rotateIdx).toBeLessThan(nohupIdx);
   });
 });

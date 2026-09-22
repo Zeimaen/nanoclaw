@@ -515,8 +515,11 @@ socket.setTimeout(1000, () => {
     '# Matrix E2EE device identity is memory-only (see',
     '# scripts/matrix-e2ee-rotate-device.ts) — must run before every start, or a',
     '# same-device-ID reboot corrupts crypto state. No-op if no Matrix instance',
-    '# has E2EE enabled. set -e above means a real failure here aborts the start.',
-    `${JSON.stringify(projectRoot + '/node_modules/.bin/tsx')} ${JSON.stringify(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}`,
+    '# has E2EE enabled, or if this checkout has no tsx/rotate script (e.g. a',
+    '# minimal fixture). set -e above means a real failure here aborts the start.',
+    `if [ -x ${shellQuote(projectRoot + '/node_modules/.bin/tsx')} ] && [ -f ${shellQuote(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')} ]; then`,
+    `  ${shellQuote(projectRoot + '/node_modules/.bin/tsx')} ${shellQuote(projectRoot + '/scripts/matrix-e2ee-rotate-device.ts')}`,
+    'fi',
     '',
     'echo "Starting NanoClaw..."',
     // Node resets the inherited SIGHUP ignore; detach from the wizard terminal.

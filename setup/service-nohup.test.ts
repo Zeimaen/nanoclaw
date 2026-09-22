@@ -83,6 +83,22 @@ describe.runIf(process.platform === 'linux')('nohup service startup', () => {
     execFileSync('/bin/bash', ['-n', path.join(host.root, 'start-nanoclaw.sh')]);
   });
 
+  it('runs the Matrix E2EE rotation step before starting when present', async () => {
+    fs.mkdirSync(path.join(host.root, 'node_modules/.bin'), { recursive: true });
+    fs.mkdirSync(path.join(host.root, 'scripts'), { recursive: true });
+    const marker = path.join(host.root, 'rotated.marker');
+    fs.writeFileSync(
+      path.join(host.root, 'node_modules/.bin/tsx'),
+      `#!/bin/bash\necho rotated >> ${JSON.stringify(marker)}\n`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(host.root, 'scripts/matrix-e2ee-rotate-device.ts'), '// stub\n');
+    acceptingHost();
+    await run([]);
+    expect(fs.readFileSync(marker, 'utf8')).toContain('rotated');
+    expect(fields()).toMatchObject({ SERVICE_LOADED: true, STATUS: 'success' });
+  });
+
   it('restarts the recorded host and waits for the replacement to be ready', async () => {
     acceptingHost(0, 250);
     await run([]);
