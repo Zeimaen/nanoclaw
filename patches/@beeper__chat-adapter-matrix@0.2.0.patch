@@ -1,109 +1,20 @@
 diff --git a/dist/index.js b/dist/index.js
-index 3360d7352fec0df580a474088205519227cc8be0..58b1712599419e99c33a599e1996342063093108 100644
+index 3360d7352fec0df580a474088205519227cc8be0..d554f290926f4aaf69a1adaf5b2f056a31ca5f4f 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -21,20 +21,34 @@ import sdk, {
-   ThreadFilterType,
-   THREAD_RELATION_TYPE
+@@ -23,5 +23,5 @@
  } from "matrix-js-sdk";
 -import { MatrixError } from "matrix-js-sdk/lib/http-api/errors";
 -import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key";
 -import { logger as matrixSDKLogger } from "matrix-js-sdk/lib/logger";
-+// matrix-js-sdk ships `"type": "module"` with no `exports` map, so Node's
-+// strict ESM resolver requires exact filenames for deep subpath imports —
-+// it does not auto-append `.js` the way CJS `require()` or dev-time loaders
-+// like `tsx` do. The five imports below were extensionless in the published
-+// package and crash immediately (ERR_MODULE_NOT_FOUND) the moment this
-+// module is loaded under plain `node` (nanoclaw's actual runtime, per
-+// `"start": "node dist/index.js"` in package.json) — silently tolerated
-+// under `tsx`, which is why this went unnoticed until a real process
-+// restart. Pre-existing bug in the published 0.2.0 package, unrelated to
-+// the E2EE-attachment fix further down; fixed here since it's the same file.
 +import { MatrixError } from "matrix-js-sdk/lib/http-api/errors.js";
 +import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto-api/recovery-key.js";
 +import { logger as matrixSDKLogger } from "matrix-js-sdk/lib/logger.js";
  import { marked } from "marked";
- import {
-   HTMLElement,
-   NodeType,
-   parse as parseHTML
- } from "node-html-parser";
-+import {
-+  Attachment as MatrixCryptoAttachment,
-+  EncryptedAttachment as MatrixCryptoEncryptedAttachment
-+} from "@matrix-org/matrix-sdk-crypto-wasm";
- 
- // src/store/chat-state-matrix-store.ts
+@@ -35,4 +35,4 @@
  import { MatrixEvent } from "matrix-js-sdk";
 -import { SyncAccumulator } from "matrix-js-sdk/lib/sync-accumulator";
 -import { MemoryStore } from "matrix-js-sdk/lib/store/memory";
 +import { SyncAccumulator } from "matrix-js-sdk/lib/sync-accumulator.js";
 +import { MemoryStore } from "matrix-js-sdk/lib/store/memory.js";
  var STORE_VERSION = 1;
- var DEFAULT_PERSIST_INTERVAL_MS = 3e4;
- function normalizeStringRecord(value) {
-@@ -2128,7 +2142,16 @@ ${codeContent}
-     return root.toString();
-   }
-   extractAttachments(content) {
--    const url = typeof content.url === "string" ? content.url : void 0;
-+    // Encrypted rooms carry media as `content.file` (the EncryptedFile
-+    // envelope: url/key/iv/hashes/v) instead of a plaintext top-level
-+    // `content.url` — see the Matrix spec's "Extensions to m.room.message
-+    // msgtypes" for encrypted rooms. Without this fallback, every image/
-+    // video/audio/file message in an E2EE room silently loses its
-+    // attachment (the caller falls through to the empty array below), and
-+    // only the message body — which clients default to the filename for
-+    // uncaptioned uploads — reaches the consumer.
-+    const encryptedFile = isRecord2(content.file) ? content.file : void 0;
-+    const url = typeof content.url === "string" ? content.url : typeof encryptedFile?.url === "string" ? encryptedFile.url : void 0;
-     if (!url) {
-       return [];
-     }
-@@ -2142,7 +2165,7 @@ ${codeContent}
-       size: typeof info?.size === "number" ? info.size : void 0,
-       width: typeof info?.w === "number" ? info.w : void 0,
-       height: typeof info?.h === "number" ? info.h : void 0,
--      fetchData: this.createAttachmentFetcher(url)
-+      fetchData: this.createAttachmentFetcher(url, encryptedFile)
-     };
-     return [attachment];
-   }
-@@ -2183,7 +2206,7 @@ ${codeContent}
-       }
-     }
-   }
--  createAttachmentFetcher(url) {
-+  createAttachmentFetcher(url, encryptedFile) {
-     if (typeof fetch !== "function") {
-       return void 0;
-     }
-@@ -2204,7 +2227,27 @@ ${codeContent}
-           `Failed to fetch Matrix attachment (${response.status} ${response.statusText})`
-         );
-       }
--      return Buffer.from(await response.arrayBuffer());
-+      const bytes = new Uint8Array(await response.arrayBuffer());
-+      if (!encryptedFile) {
-+        return Buffer.from(bytes);
-+      }
-+      // The homeserver only ever stores the AES-CTR ciphertext for
-+      // encrypted-room media — the key/iv/hashes travel inside the
-+      // (megolm-decrypted) event content instead, per the Matrix spec.
-+      // `@matrix-org/matrix-sdk-crypto-wasm` already ships this exact
-+      // primitive (matrix-js-sdk's rust crypto backend depends on it for
-+      // E2EE), so no extra dependency or hand-rolled AES is needed — but it
-+      // isn't declared as *this* package's own dependency, so it wouldn't
-+      // normally be resolvable from here under pnpm's isolated linking.
-+      // pnpm-workspace.yaml's packageExtensions entry for this package adds
-+      // it to the manifest pnpm resolves against, which is what actually
-+      // links it in (patchedDependencies alone only rewrites files after
-+      // linking, too late to affect what gets linked). `EncryptedAttachment`'s
-+      // media-encryption-info argument takes the `content.file` envelope
-+      // verbatim as JSON.
-+      const encrypted = new MatrixCryptoEncryptedAttachment(bytes, JSON.stringify(encryptedFile));
-+      const decrypted = MatrixCryptoAttachment.decrypt(encrypted);
-+      return Buffer.from(decrypted);
-     };
-   }
-   resolveAttachmentDownloadURL(url, client) {
