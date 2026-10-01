@@ -21,6 +21,7 @@ import { readEnvFile } from '../env.js';
 import type { ChannelDefaults } from './adapter.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { wrapWithVoiceNotes } from './matrix-voice.js';
 
 /**
  * Assumes a dedicated bot account on a homeserver (the common install).
@@ -517,6 +518,7 @@ function registerMatrixInstance(registryName: string, instance: string | undefin
       forceInMemoryE2EEStore(rawMatrixAdapter);
       wrapWithSelfCrossSigning(rawMatrixAdapter);
       wrapWithFreshDmLookup(rawMatrixAdapter);
+      wrapWithVoiceNotes(rawMatrixAdapter);
       const matrixAdapter = wrapWithDmResolution(rawMatrixAdapter);
       const bridge = createChatSdkBridge({
         adapter: matrixAdapter,
