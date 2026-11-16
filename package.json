@@ -39,8 +39,8 @@
   },
   "dependencies": {
     "@beeper/chat-adapter-matrix": "0.2.0",
-    "@chat-adapter/discord": "4.29.0",
-    "@chat-adapter/telegram": "4.29.0",
+    "@chat-adapter/discord": "4.41.1",
+    "@chat-adapter/telegram": "4.41.1",
     "@clack/core": "^1.2.0",
     "@clack/prompts": "^1.2.0",
     "@onecli-sh/sdk": "2.2.1",
@@ -70,7 +70,8 @@
   },
   "pnpm": {
     "patchedDependencies": {
-      "@beeper/chat-adapter-matrix@0.2.0": "patches/@beeper__chat-adapter-matrix@0.2.0.patch"
+      "@beeper/chat-adapter-matrix@0.2.0": "patches/@beeper__chat-adapter-matrix@0.2.0.patch",
+      "@chat-adapter/discord@4.41.1": "patches/@chat-adapter__discord@4.41.1.patch"
     }
   }
 }

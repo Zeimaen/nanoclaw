@@ -2,7 +2,10 @@
  * Discord channel adapter (v2) — uses Chat SDK bridge.
  * Self-registers on import.
  */
-import { createDiscordAdapter } from '@chat-adapter/discord';
+import { cardToDiscordPayload, createDiscordAdapter } from '@chat-adapter/discord';
+import { parseMarkdown, walkAst } from 'chat';
+
+import * as askQuestion from './ask-question.js';
 
 import { readEnvFile } from '../env.js';
 import type { ChannelDefaults } from './adapter.js';
@@ -21,6 +24,54 @@ const DISCORD_DEFAULTS: ChannelDefaults = {
   mentions: 'platform',
 };
 
+/**
+ * Discord renders card text as Markdown: `[text](url)` shows any text for a
+ * link, `<@id>` shows another user's name and `||text||` hides text. A word
+ * joiner breaks each outside code (including every pipe in a spoiler run), and
+ * a clicker's name or a request value can't pose as other text.
+ */
+export function escapeDiscordCardText(card: string): string {
+  // Discord reads \r and \r\n as a line break and drops form feeds before it
+  // parses, so check and send the text as Discord will read it.
+  const text = card.replace(/\r\n?/g, '\n').replace(/\f/g, '');
+  // Code is already literal on Discord. Keep commands inside matched code
+  // spans/fences byte-for-byte, and escape only the surrounding prose. Its
+  // backticks and [ get a backslash: Discord pairs a backtick, or ends a link,
+  // past code and across the blocks of one embed, which are escaped one by one.
+  const escape = (prose: string) =>
+    prose
+      .replace(/\]\(/g, ']\u2060(')
+      .replace(/</g, '<\u2060')
+      .replace(/\|{2,}/g, (pipes) => pipes.split('').join('\u2060') + '\u2060')
+      .replace(/(\\*)([`[])/g, (match, slashes: string, mark: string) =>
+        slashes.length % 2 ? match : `${slashes}\\${mark}`,
+      );
+  let result = '';
+  let offset = 0;
+  let code: Array<{ start: number; end: number }> = [];
+  // Discord ends ``` code at the next ```, even mid-line, inside a longer
+  // fence or past a blank fence's close, shows indented, tilde and unclosed
+  // fences as prose, and ends a quote at the line. So only a one-line span
+  // with no backtick, or a ``` fence holding a non-blank line and no ```, stays raw.
+  const plain = /^(?:(`{1,2})[^`\n]+\1|```[^`\n]*\n\n*(?:[^`\n]|`(?!``))(?:[^`]|`(?!``))*\n```[ \t]*)$/;
+  walkAst(parseMarkdown(text), (node) => {
+    if (node.type === 'code' || node.type === 'inlineCode') {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined && plain.test(text.slice(start, end))) code.push({ start, end });
+    }
+    return node;
+  });
+  // Any other unescaped backtick can shift Discord's pairing: keep nothing raw.
+  const outside = [...code.map((c, i) => text.slice(i ? code[i - 1].end : 0, c.start)), text.slice(code.at(-1)?.end)];
+  if (outside.some((part) => /(?:^|[^\\])(?:\\\\)*`/.test(part))) code = [];
+  for (const { start, end } of code) {
+    result += escape(text.slice(offset, start)) + text.slice(start, end);
+    offset = end;
+  }
+  return result + escape(text.slice(offset));
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractReplyContext(raw: Record<string, any>): ReplyContext | null {
   if (!raw.referenced_message) return null;
@@ -34,9 +85,8 @@ function extractReplyContext(raw: Record<string, any>): ReplyContext | null {
 /**
  * Discord message forwards carry their content in `message_snapshots`, not
  * `content` (`message_reference.type === 1` means FORWARD; 0 is a normal
- * reply). The adapter only reads `content`/`attachments`, so without this the
- * agent sees an empty message. Unwrap the snapshot back into the payload so
- * text, attachment download, and formatting all ride the existing path.
+ * reply). Unwrap the snapshot into the payload, then drop `message_snapshots`
+ * so adapters >= 4.38 (which flatten snapshots themselves) don't add it twice.
  * Note: snapshots contain no author, so the original sender is unavailable.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,9 +109,10 @@ export function unwrapForwardedSnapshot(data: Record<string, any>): void {
   if (fwdAttachments.length > 0) {
     data.attachments = [...(data.attachments ?? []), ...fwdAttachments];
   }
+  delete data.message_snapshots;
 }
 
-function unwrapForwards(adapter: ReturnType<typeof createDiscordAdapter>): void {
+export function unwrapForwards(adapter: ReturnType<typeof createDiscordAdapter>): void {
   const a = adapter as unknown as {
     handleForwardedMessage: (data: Record<string, unknown>, options?: unknown) => Promise<void>;
   };
@@ -72,42 +123,44 @@ function unwrapForwards(adapter: ReturnType<typeof createDiscordAdapter>): void 
   };
 }
 
-/**
- * Registers one Discord bot app under a registry key. `instance` is passed
- * through to the chat-sdk bridge so N separate bot applications can run side
- * by side (each gets its own registry/activeAdapters key, webhook route, and
- * state namespace — see chat-sdk-bridge.ts). The default instance stays
- * `undefined` so single-bot installs are unaffected (keyed by channelType).
- * `envPrefix` lets each instance read its own token/app-id/public-key trio
- * instead of colliding on the same three env vars.
- */
-function registerDiscordInstance(registryName: string, instance: string | undefined, envPrefix: string): void {
-  registerChannelAdapter(registryName, {
-    factory: () => {
-      const env = readEnvFile([`${envPrefix}BOT_TOKEN`, `${envPrefix}PUBLIC_KEY`, `${envPrefix}APPLICATION_ID`]);
-      const botToken = env[`${envPrefix}BOT_TOKEN`];
-      if (!botToken) return null;
-      const discordAdapter = createDiscordAdapter({
-        botToken,
-        publicKey: env[`${envPrefix}PUBLIC_KEY`],
-        applicationId: env[`${envPrefix}APPLICATION_ID`],
-      });
-      unwrapForwards(discordAdapter);
-      return createChatSdkBridge({
-        adapter: discordAdapter,
-        concurrency: 'concurrent',
-        botToken,
-        instance,
-        extractReplyContext,
-        supportsThreads: true,
-        defaults: DISCORD_DEFAULTS,
-        // Discord rejects messages over 2000 chars; without this the bridge
-        // would let long agent replies fail instead of splitting them.
-        maxTextLength: 2000,
-      });
-    },
-    defaults: DISCORD_DEFAULTS,
-  });
-}
-
-registerDiscordInstance('discord', undefined, 'DISCORD_');
+registerChannelAdapter('discord', {
+  factory: () => {
+    const env = readEnvFile(['DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY', 'DISCORD_APPLICATION_ID']);
+    if (!env.DISCORD_BOT_TOKEN) return null;
+    const discordAdapter = createDiscordAdapter({
+      botToken: env.DISCORD_BOT_TOKEN,
+      publicKey: env.DISCORD_PUBLIC_KEY,
+      applicationId: env.DISCORD_APPLICATION_ID,
+    });
+    const edit = discordAdapter.editMessage.bind(discordAdapter);
+    discordAdapter.editMessage = async (...args) => {
+      const message = args[2];
+      const { CardTooLongError } = askQuestion as { CardTooLongError?: new (reason: string) => Error };
+      if (CardTooLongError && typeof message === 'object' && 'card' in message) {
+        const payload = cardToDiscordPayload(message.card);
+        if (payload.embeds.some((embed) => (embed.description?.length ?? 0) > 4096)) {
+          throw new CardTooLongError('the resolved card exceeds the Discord embed description limit');
+        }
+      }
+      return edit(...args);
+    };
+    unwrapForwards(discordAdapter);
+    return createChatSdkBridge({
+      adapter: discordAdapter,
+      concurrency: 'concurrent',
+      botToken: env.DISCORD_BOT_TOKEN,
+      extractReplyContext,
+      supportsThreads: true,
+      defaults: DISCORD_DEFAULTS,
+      // Discord rejects messages over 2000 chars; without this the bridge
+      // would let long agent replies fail instead of splitting them.
+      maxTextLength: 2000,
+      // A card is one embed, whose description Discord caps at 4,096. The
+      // limit counts the title and escaped text, and the embed adds only a
+      // blank line between blocks, so a longer card is refused, never cut.
+      // Spread, so an older core without these options still type-checks (and ignores them).
+      ...{ escapeCardText: escapeDiscordCardText, maxCardTextLength: 4000 },
+    });
+  },
+  defaults: DISCORD_DEFAULTS,
+});

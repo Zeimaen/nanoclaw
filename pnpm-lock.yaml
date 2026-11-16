@@ -8,8 +8,11 @@ packageExtensionsChecksum: sha256-ScIP07y4wBd0QnhiwL1ldPHXk9eRcRDrvlKPPKKABlk=
 
 patchedDependencies:
   '@beeper/chat-adapter-matrix@0.2.0':
-    hash: 8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6
+    hash: d8f9cda088701285b3be191ea30edfd2e96ccb7b97f2934fa8c26c1fa424c020
     path: patches/@beeper__chat-adapter-matrix@0.2.0.patch
+  '@chat-adapter/discord@4.41.1':
+    hash: 21b9919cd6699e1f1d1b8091561b798b98a37aae40a1c266e3bfa1b075dd1706
+    path: patches/@chat-adapter__discord@4.41.1.patch
 
 importers:
 
@@ -17,13 +20,13 @@ importers:
     dependencies:
       '@beeper/chat-adapter-matrix':
         specifier: 0.2.0
-        version: 0.2.0(patch_hash=8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6)
+        version: 0.2.0(patch_hash=d8f9cda088701285b3be191ea30edfd2e96ccb7b97f2934fa8c26c1fa424c020)
       '@chat-adapter/discord':
-        specifier: 4.29.0
-        version: 4.29.0
+        specifier: 4.41.1
+        version: 4.41.1(patch_hash=21b9919cd6699e1f1d1b8091561b798b98a37aae40a1c266e3bfa1b075dd1706)
       '@chat-adapter/telegram':
-        specifier: 4.29.0
-        version: 4.29.0
+        specifier: 4.41.1
+        version: 4.41.1
       '@clack/core':
         specifier: ^1.2.0
         version: 1.2.0
@@ -102,12 +105,12 @@ packages:
     resolution: {integrity: sha512-UtpW5mMgIjYBRDIgxJKh+tfnlFe0GjLsFG5MPPUDA5b/PggSOAt00TFr0xF6UIXXh1SaK3V1u3FiXyM2sdnaJQ==}
     engines: {node: '>=20'}
 
-  '@chat-adapter/discord@4.29.0':
-    resolution: {integrity: sha512-C6pDVKn7s0PhvgeqldYxoShWXJzthwtlo+sCesqenh56M03eHsioinqxeJttmtK8y1ZD8/qiP2lAZufDwuEQhA==}
+  '@chat-adapter/discord@4.41.1':
+    resolution: {integrity: sha512-i5WH8cxsGN0KK9GXaZFijJ4X8oOlZNYMxepyIg1Boxe8HiM/7HBGpaXTy+6Ei7c5ZyoDfuPk8aWft5dx+Si/ag==}
     engines: {node: '>=20'}
 
-  '@chat-adapter/shared@4.29.0':
-    resolution: {integrity: sha512-ARqTDoHJHKN9rpytbFPJbNmqqx3fOg5xwsTZdlingQPAssOSeHDBdqrFJkgDhyCRGbmDtG09cuS0FkVzeoh2qg==}
+  '@chat-adapter/shared@4.41.1':
+    resolution: {integrity: sha512-ia1Ctd4mclpiNd+sYUc/fo9RXIFoBr/Z0JFFk3hue1XiFXPTJClG/BHpS+243UmSkeE5JORjY4MmW+szdhhFWw==}
     engines: {node: '>=20'}
 
   '@chat-adapter/state-memory@4.44.0':
@@ -118,8 +121,8 @@ packages:
     resolution: {integrity: sha512-0wuzTqdWjaAoDyG1boEYlgnBFVJCOyJdjEosez4oxdyW1p4si5lS7d9uMtEKPBDG0+OUbLmh+tUO+Mnsdz1gAw==}
     engines: {node: '>=20'}
 
-  '@chat-adapter/telegram@4.29.0':
-    resolution: {integrity: sha512-015tU3HEjFQWw7DgebXWkDeQA6lTdTVEO4btAV3f6U1kEnOfjLVJq98latcsM1WkEvv+3LIFKpsz9pG53aamBw==}
+  '@chat-adapter/telegram@4.41.1':
+    resolution: {integrity: sha512-BgONRwr5RWHTXFGg5w/uWRHwW0Z7LclCQDnUa5psI+JYw19hsZ1HJSPnYq9PAZN/UpWflV2O6XWxFpT4Ff4CbQ==}
     engines: {node: '>=20'}
 
   '@clack/core@1.2.0':
@@ -736,18 +739,6 @@ packages:
   character-entities@2.0.2:
     resolution: {integrity: sha512-shx7oQ0Awen/BRIdkjkvz54PnEEI/EjwXDSIZp86/KKdbafHh1Df/RYGBhn4hbe2+uKC9FnT5UCEdyPz3ai9hQ==}
 
-  chat@4.29.0:
-    resolution: {integrity: sha512-KdPfzaie5ivYytyRICTERg5xT+LeCbYefokvNAqTHe92eqkFaoTMXXkSitikxJVWhZIb2YoXF1b9UZHyzSzKzw==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      ai: ^6.0.182
-      zod: ^3.0.0 || ^4.0.0
-    peerDependenciesMeta:
-      ai:
-        optional: true
-      zod:
-        optional: true
-
   chat@4.41.1:
     resolution: {integrity: sha512-+/LDcLoYLihf/9Kp5ymj2ylvm6q5vySQTMn0ZoeU0UWDfNVmCNc6OiADW8hwnejOLfevUs8lEpgotG9rmIxZvg==}
     engines: {node: '>=20'}
@@ -836,9 +827,6 @@ packages:
 
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
-
-  discord-api-types@0.37.120:
-    resolution: {integrity: sha512-7xpNK0EiWjjDFp2nAhHXezE4OUWm7s1zhc/UXXN6hnFFU8dfoPHgV0Hx0RPiCa3ILRpdeh152icc68DGCyXYIw==}
 
   discord-api-types@0.38.59:
     resolution: {integrity: sha512-LZqh8gvWU/Bhl9qEVIRLeLJuaPGO7rA26IXLrXnMcjXxofh/h5UhP6notfCTj4X5kR1ogMvVgcrVYIuynY/CxQ==}
@@ -1680,7 +1668,7 @@ snapshots:
 
   '@babel/runtime@8.1.2': {}
 
-  '@beeper/chat-adapter-matrix@0.2.0(patch_hash=8aa0c9914defa24dd71a445e816719abd411993e6593b87f15a760c17635bad6)':
+  '@beeper/chat-adapter-matrix@0.2.0(patch_hash=d8f9cda088701285b3be191ea30edfd2e96ccb7b97f2934fa8c26c1fa424c020)':
     dependencies:
       '@chat-adapter/state-memory': 4.44.0
       '@chat-adapter/state-redis': 4.44.0
@@ -1699,11 +1687,11 @@ snapshots:
 
   '@chat-adapter/catalog@4.44.0': {}
 
-  '@chat-adapter/discord@4.29.0':
+  '@chat-adapter/discord@4.41.1(patch_hash=21b9919cd6699e1f1d1b8091561b798b98a37aae40a1c266e3bfa1b075dd1706)':
     dependencies:
-      '@chat-adapter/shared': 4.29.0
-      chat: 4.29.0
-      discord-api-types: 0.37.120
+      '@chat-adapter/shared': 4.41.1
+      chat: 4.41.1
+      discord-api-types: 0.38.59
       discord-interactions: 4.4.0
       discord.js: 14.28.1
     transitivePeerDependencies:
@@ -1711,14 +1699,16 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
+      - workflow
       - zod
 
-  '@chat-adapter/shared@4.29.0':
+  '@chat-adapter/shared@4.41.1':
     dependencies:
-      chat: 4.29.0
+      chat: 4.41.1
     transitivePeerDependencies:
       - ai
       - supports-color
+      - workflow
       - zod
 
   '@chat-adapter/state-memory@4.44.0':
@@ -1742,13 +1732,14 @@ snapshots:
       - workflow
       - zod
 
-  '@chat-adapter/telegram@4.29.0':
+  '@chat-adapter/telegram@4.41.1':
     dependencies:
-      '@chat-adapter/shared': 4.29.0
-      chat: 4.29.0
+      '@chat-adapter/shared': 4.41.1
+      chat: 4.41.1
     transitivePeerDependencies:
       - ai
       - supports-color
+      - workflow
       - zod
 
   '@clack/core@1.2.0':
@@ -2253,18 +2244,6 @@ snapshots:
 
   character-entities@2.0.2: {}
 
-  chat@4.29.0:
-    dependencies:
-      '@workflow/serde': 4.1.0-beta.2
-      mdast-util-to-string: 4.0.0
-      remark-gfm: 4.0.1
-      remark-parse: 11.0.0
-      remark-stringify: 11.0.0
-      remend: 1.3.0
-      unified: 11.0.5
-    transitivePeerDependencies:
-      - supports-color
-
   chat@4.41.1:
     dependencies:
       '@workflow/serde': 4.1.0-beta.2
@@ -2339,8 +2318,6 @@ snapshots:
   devlop@1.1.0:
     dependencies:
       dequal: 2.0.3
-
-  discord-api-types@0.37.120: {}
 
   discord-api-types@0.38.59: {}
 
