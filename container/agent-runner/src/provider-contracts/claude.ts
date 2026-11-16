@@ -25,8 +25,8 @@ const tone = { default: 'default', toSettings: (tone: string) => ({ outputStyle:
 export const claudeRuntimeContract: ProviderRuntimeContract = {
   seamVersion: PROVIDER_RUNTIME_CONTRACT_SEAM_VERSION,
   configuration: {
-    // Claude's stance is fixed — the container and the OneCLI allow-list are
-    // the boundary — so it is declared as the constant it is.
+    // Claude's stance is fixed — the container and the credential gateway's
+    // allow-list are the boundary — so it is declared as the constant it is.
     executionPolicy: { constant: resolveClaudeExecutionPolicy() },
     inference: resolveClaudeInference,
     tone,
@@ -40,10 +40,22 @@ export const claudeRuntimeContract: ProviderRuntimeContract = {
   // (providers/claude-history.ts); core only needs the trace lookup.
   history: { readTrace: newestClaudeTranscript },
   textDelivery: 'mid-turn-complete',
+  // Aliases are listed with their command, as in the host contract.
   commands: {
     formatting: 'native',
-    nativeAdmin: ['/remote-control', '/compact', '/context', '/cost', '/files'],
-    nativeFiltered: ['/help', '/login', '/logout', '/doctor', '/config', '/start'],
+    nativeAdmin: [
+      '/remote-control',
+      '/rc',
+      '/compact',
+      '/context',
+      '/cost',
+      '/usage',
+      '/stats',
+      '/files',
+      '/reset',
+      '/new',
+    ],
+    nativeFiltered: ['/help', '/login', '/logout', '/doctor', '/checkup', '/config', '/settings', '/start'],
   },
 };
 

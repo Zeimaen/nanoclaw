@@ -26,7 +26,8 @@ import { migration022 } from './022-messaging-group-detached.js';
 import { migration023 } from './023-approvals-instance.js';
 import { migration024 } from './024-host-coordination.js';
 import { migration025 } from './025-container-config-speed.js';
-import { migration026 } from './026-user-dms-drop-instance.js';
+import { migration026 as migration026UserDmsDropInstance } from './026-user-dms-drop-instance.js';
+import { migration026 } from './026-pending-question-body.js';
 
 interface MigrationBase {
   version: number;
@@ -94,6 +95,9 @@ export const migrations: Migration[] = [
   migration023,
   migration024,
   migration025,
+  // Fork-local: applied on this install as "user-dms-drop-instance" before
+  // upstream claimed version 26. Identity is the name, so both coexist.
+  migration026UserDmsDropInstance,
   migration026,
 ];
 

@@ -231,7 +231,7 @@ describe('apply engine lifecycle', () => {
   });
 
   it('plan marks the unknown step ↳agent and the prompt ? needs-input before any write', () => {
-    const { steps, agentSteps, needsInput } = planSkill(skillDir, root);
+    const { agentSteps, needsInput } = planSkill(skillDir, root);
     expect(agentSteps).toBe(1);
     expect(needsInput).toContain('token');
     expect(existsSync(join(root, 'src/sample.ts'))).toBe(false); // planning mutated nothing
@@ -613,6 +613,8 @@ describe('nc:run multi-field JSON capture + validate', () => {
     const res = await applySkill(mskill, mroot, { inputs: {}, exec: () => JSON.stringify({ id: 'not-a-number' }) });
     expect(res.agentTasks).toHaveLength(1); // bounce, not re-ask
     expect(res.agentTasks[0].kind).toBe('run');
+    expect(res.agentTasks[0].reason).toContain('captured app_id does not match');
+    expect(res.agentTasks[0].reason).not.toContain('not-a-number'); // remote text stays out of the bounce
     expect(res.vars.app_id).toBeUndefined(); // validate failed before binding
     // the downstream env-set then defers on the unresolved {{app_id}}
     expect(res.deferred.some((d) => /unresolved \{\{app_id\}\}/.test(d))).toBe(true);
@@ -630,6 +632,7 @@ describe('nc:run multi-field JSON capture + validate', () => {
     writeFileSync(join(mskill, 'SKILL.md'), MULTI_CAPTURE_SKILL);
     const res = await applySkill(mskill, mroot, { inputs: {}, exec: () => 'not json at all' });
     expect(res.agentTasks).toHaveLength(1);
+    expect(res.agentTasks[0].reason).not.toContain('not json'); // remote text stays out of the bounce
     expect(res.vars.application_id).toBeUndefined();
   });
 });
