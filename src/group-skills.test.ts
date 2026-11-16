@@ -164,23 +164,29 @@ describe('materializeTemplateSkills', () => {
     });
 
     it('resolves the legacy shape to the same anchored result as the segments form', () => {
-      templateSkill('g10', 'widget', 'SKILL.md', 'body');
-      const scripts = path.join(DATA_DIR, 'v2-sessions', 'g10', '.claude-shared', 'skills', 'widget', 'scripts');
-      fs.mkdirSync(scripts);
-      fs.writeFileSync(path.join(scripts, 'run.sh'), '#!/bin/sh\n');
-      fs.chmodSync(path.join(scripts, 'run.sh'), 0o755);
-      const groupA = path.join(GROUPS_DIR, 'grp-a');
-      const groupB = path.join(GROUPS_DIR, 'grp-b');
-      fs.mkdirSync(groupA, { recursive: true });
-      fs.mkdirSync(groupB, { recursive: true });
+      // The 644 mode check assumes the common 022 umask; hosts with 002 write 664.
+      const umask = process.umask(0o022);
+      try {
+        templateSkill('g10', 'widget', 'SKILL.md', 'body');
+        const scripts = path.join(DATA_DIR, 'v2-sessions', 'g10', '.claude-shared', 'skills', 'widget', 'scripts');
+        fs.mkdirSync(scripts);
+        fs.writeFileSync(path.join(scripts, 'run.sh'), '#!/bin/sh\n');
+        fs.chmodSync(path.join(scripts, 'run.sh'), 0o755);
+        const groupA = path.join(GROUPS_DIR, 'grp-a');
+        const groupB = path.join(GROUPS_DIR, 'grp-b');
+        fs.mkdirSync(groupA, { recursive: true });
+        fs.mkdirSync(groupB, { recursive: true });
 
-      materializeTemplateSkills('g10', groupA, ['.agents', 'skills']);
-      materializeTemplateSkills('g10', path.join(groupB, '.agents', 'skills'));
+        materializeTemplateSkills('g10', groupA, ['.agents', 'skills']);
+        materializeTemplateSkills('g10', path.join(groupB, '.agents', 'skills'));
 
-      expect(tree(groupB)).toEqual(tree(groupA));
-      expect(tree(groupB)).toContain('file .agents/skills/widget/SKILL.md:body:644');
-      expect(fs.lstatSync(path.join(groupB, '.agents', 'skills', 'widget')).isSymbolicLink()).toBe(false);
-      expect(warn).not.toHaveBeenCalled();
+        expect(tree(groupB)).toEqual(tree(groupA));
+        expect(tree(groupB)).toContain('file .agents/skills/widget/SKILL.md:body:644');
+        expect(fs.lstatSync(path.join(groupB, '.agents', 'skills', 'widget')).isSymbolicLink()).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        process.umask(umask);
+      }
     });
 
     it('refuses a symlinked destination skills dir, deleting and copying nothing through it', () => {
