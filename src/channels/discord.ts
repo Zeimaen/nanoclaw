@@ -123,44 +123,59 @@ export function unwrapForwards(adapter: ReturnType<typeof createDiscordAdapter>)
   };
 }
 
-registerChannelAdapter('discord', {
-  factory: () => {
-    const env = readEnvFile(['DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY', 'DISCORD_APPLICATION_ID']);
-    if (!env.DISCORD_BOT_TOKEN) return null;
-    const discordAdapter = createDiscordAdapter({
-      botToken: env.DISCORD_BOT_TOKEN,
-      publicKey: env.DISCORD_PUBLIC_KEY,
-      applicationId: env.DISCORD_APPLICATION_ID,
-    });
-    const edit = discordAdapter.editMessage.bind(discordAdapter);
-    discordAdapter.editMessage = async (...args) => {
-      const message = args[2];
-      const { CardTooLongError } = askQuestion as { CardTooLongError?: new (reason: string) => Error };
-      if (CardTooLongError && typeof message === 'object' && 'card' in message) {
-        const payload = cardToDiscordPayload(message.card);
-        if (payload.embeds.some((embed) => (embed.description?.length ?? 0) > 4096)) {
-          throw new CardTooLongError('the resolved card exceeds the Discord embed description limit');
+/**
+ * Registers one Discord bot app under a registry key. `instance` is passed
+ * through to the chat-sdk bridge so N separate bot applications can run side
+ * by side (each gets its own registry/activeAdapters key, webhook route, and
+ * state namespace — see chat-sdk-bridge.ts). The default instance stays
+ * `undefined` so single-bot installs are unaffected (keyed by channelType).
+ * `envPrefix` lets each instance read its own token/app-id/public-key trio
+ * instead of colliding on the same three env vars.
+ */
+function registerDiscordInstance(registryName: string, instance: string | undefined, envPrefix: string): void {
+  registerChannelAdapter(registryName, {
+    factory: () => {
+      const env = readEnvFile([`${envPrefix}BOT_TOKEN`, `${envPrefix}PUBLIC_KEY`, `${envPrefix}APPLICATION_ID`]);
+      const botToken = env[`${envPrefix}BOT_TOKEN`];
+      if (!botToken) return null;
+      const discordAdapter = createDiscordAdapter({
+        botToken,
+        publicKey: env[`${envPrefix}PUBLIC_KEY`],
+        applicationId: env[`${envPrefix}APPLICATION_ID`],
+      });
+      const edit = discordAdapter.editMessage.bind(discordAdapter);
+      discordAdapter.editMessage = async (...args) => {
+        const message = args[2];
+        const { CardTooLongError } = askQuestion as { CardTooLongError?: new (reason: string) => Error };
+        if (CardTooLongError && typeof message === 'object' && 'card' in message) {
+          const payload = cardToDiscordPayload(message.card);
+          if (payload.embeds.some((embed) => (embed.description?.length ?? 0) > 4096)) {
+            throw new CardTooLongError('the resolved card exceeds the Discord embed description limit');
+          }
         }
-      }
-      return edit(...args);
-    };
-    unwrapForwards(discordAdapter);
-    return createChatSdkBridge({
-      adapter: discordAdapter,
-      concurrency: 'concurrent',
-      botToken: env.DISCORD_BOT_TOKEN,
-      extractReplyContext,
-      supportsThreads: true,
-      defaults: DISCORD_DEFAULTS,
-      // Discord rejects messages over 2000 chars; without this the bridge
-      // would let long agent replies fail instead of splitting them.
-      maxTextLength: 2000,
-      // A card is one embed, whose description Discord caps at 4,096. The
-      // limit counts the title and escaped text, and the embed adds only a
-      // blank line between blocks, so a longer card is refused, never cut.
-      // Spread, so an older core without these options still type-checks (and ignores them).
-      ...{ escapeCardText: escapeDiscordCardText, maxCardTextLength: 4000 },
-    });
-  },
-  defaults: DISCORD_DEFAULTS,
-});
+        return edit(...args);
+      };
+      unwrapForwards(discordAdapter);
+      return createChatSdkBridge({
+        adapter: discordAdapter,
+        concurrency: 'concurrent',
+        botToken,
+        instance,
+        extractReplyContext,
+        supportsThreads: true,
+        defaults: DISCORD_DEFAULTS,
+        // Discord rejects messages over 2000 chars; without this the bridge
+        // would let long agent replies fail instead of splitting them.
+        maxTextLength: 2000,
+        // A card is one embed, whose description Discord caps at 4,096. The
+        // limit counts the title and escaped text, and the embed adds only a
+        // blank line between blocks, so a longer card is refused, never cut.
+        // Spread, so an older core without these options still type-checks (and ignores them).
+        ...{ escapeCardText: escapeDiscordCardText, maxCardTextLength: 4000 },
+      });
+    },
+    defaults: DISCORD_DEFAULTS,
+  });
+}
+
+registerDiscordInstance('discord', undefined, 'DISCORD_');
