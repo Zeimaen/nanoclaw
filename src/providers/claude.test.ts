@@ -82,3 +82,35 @@ describe('claude provider container env', () => {
     expect((await claudeEnv())?.[KEY]).toBeUndefined();
   });
 });
+
+describe('claude provider telemetry opt-outs', () => {
+  const keys = ['DISABLE_TELEMETRY', 'DISABLE_ERROR_REPORTING', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+
+  afterEach(() => {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('passes each opt-out from .env as 1', async () => {
+    for (const k of keys) delete process.env[k];
+    dotenv.values = Object.fromEntries(keys.map((k) => [k, 'true']));
+    const env = await claudeEnv();
+    for (const k of keys) expect(env?.[k]).toBe('1');
+  });
+
+  it('honors the service env over .env', async () => {
+    process.env.DISABLE_TELEMETRY = '1';
+    dotenv.values = { DISABLE_TELEMETRY: '0' };
+    expect((await claudeEnv())?.DISABLE_TELEMETRY).toBe('1');
+  });
+
+  it('passes nothing when unset or not turned on', async () => {
+    for (const k of keys) delete process.env[k];
+    dotenv.values = { DISABLE_TELEMETRY: '0' };
+    const env = await claudeEnv();
+    for (const k of keys) expect(env?.[k]).toBeUndefined();
+  });
+});
